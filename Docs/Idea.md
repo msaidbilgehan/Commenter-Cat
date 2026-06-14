@@ -173,7 +173,7 @@ remains here is uniquely ours.
 ## 4. Interfaces
 
 Three interfaces: the agent surface is the product; JSONL is an output; SQLite is the
-cache. JSONL and SQLite each carry a `schema_version`.
+cache. JSONL and each SQLite layer (`inputs.db`, `index.db`, §6) carry a `schema_version`.
 
 ### Comment record (shape)
 
@@ -624,36 +624,62 @@ ESLint:  baseline 10.3.0 · system 10.4.1 (ignored — using pinned) · config d
 
 ## 6. Storage (SQLite)
 
-**SQLite per project.** For 10k–100k comments (tiny), SQLite wins: zero-server, single
-file, `rusqlite`, **WAL mode** for concurrent readers + one writer.
+**SQLite per project.** For 10k–100k comments (tiny), SQLite wins: zero-server, embedded,
+`rusqlite`, **WAL mode** for concurrent readers + one writer. The cache is **two files**
+(below): a content-addressed input store and a derived query index.
 
 ### One writer
 
 The engine is the **sole writer** of everything — comment facts, normalized provider
 findings, embeddings. One language, no writer war; `busy_timeout` covers hook-vs-foreground.
 
+### Two layers — content-addressed inputs vs. derived index
+
+The cache splits along *cost to produce* — which is what makes **rebuild-over-migrate** cheap
+(§11):
+
+- **`inputs.db` — content-addressed, expensive to produce, survives schema bumps.** Provider
+  results keyed `(content_hash, provider, provider_version)` and embedding vectors keyed
+  `(content_hash, model_version)`. This is the layer that costs real time — provider subprocesses
+  and ONNX inference — so it is keyed by *content*, never by CF's layout; a CF schema change never
+  invalidates it. Its own schema is deliberately minimal and rarely bumps.
+- **`index.db` — derived, cheap to rebuild, CF-schema-versioned.** The queryable layer:
+  relational comment facts + mapping, the FTS5 index, the `sqlite-vec` `vec0` index, and the
+  identity / suppression tables. Built by the deterministic native pass reading from `inputs.db` —
+  re-inserting precomputed provider JSON and vectors into fresh structures, with no re-run and no
+  re-embed.
+
+So an `index.db` schema bump is a **re-derive** (native pass + reads, ripgrep-class), not a cold
+scan; only a rare `inputs.db` schema bump forces re-running providers / re-embedding. The native
+pass is deterministic, so identity and suppression re-derive byte-identically — a rebuild loses
+nothing.
+
 ### Cache correctness — the cost lever
 
 - **Key on content/blob hash, not path+mtime.** mtime is a liar; a fast-path hint only.
 - **Source of truth = scanner-on-demand.** The DB is a cache; queries are correct with zero
   hooks installed.
-- **Provider-result cache** — keyed `(content_hash, provider, provider_version)`. **A
-  provider never re-runs on an unchanged file.** Re-running ruff/eslint/shellcheck is the
-  expensive step, so this is the biggest performance lever.
+- **Provider-result cache** (`inputs.db`) — keyed `(content_hash, provider, provider_version)`.
+  **A provider never re-runs on an unchanged file.** Re-running ruff/eslint/shellcheck is the
+  expensive step, so this is the biggest performance lever — and being content-addressed, it
+  survives schema bumps (above).
 
 ### Search: FTS5 + sqlite-vec (hybrid)
 
 - **FTS5** — keyword search over comment bodies.
 - **sqlite-vec** — vector similarity for semantic recall, clustering, near-dup detection.
 - **Hybrid retrieval** — reciprocal rank fusion of keyword + semantic.
-- **Embeddings are engine-computed and local** (`fastembed-rs` / `ort`, ONNX),
-  `content_hash`-keyed. Never ship comments to an embedding API (proprietary context).
+- **Embeddings are engine-computed and local** (`fastembed-rs` / `ort`, ONNX). The **raw vectors
+  live in `inputs.db`**, keyed `(content_hash, model_version)` (so they survive a rebuild); the
+  queryable `vec0` index is derived into `index.db`. Never ship comments to an embedding API
+  (proprietary context).
 - **Distribution requirement:** `load_extension` enabled in `rusqlite`'s bundled SQLite;
   ship the `sqlite-vec` artifact per platform, version-matched.
 
 ### Location & lifecycle
 
-- **Per-project, auto-initialized, gitignored** at `<repo_root>/.comment-finder/index.db`.
+- **Per-project, auto-initialized, gitignored** at `<repo_root>/.comment-finder/`
+  (`inputs.db` + `index.db`).
 - A local, rebuildable cache — never committed. **Shared/team truth is CI's job** (§7).
 - **Repo-root resolution** handles `git worktree` + submodules via
   `git rev-parse --show-toplevel` / `--git-common-dir`.
@@ -696,21 +722,25 @@ reports the per-stage breakdown so regressions are visible.
 - **Fast + non-fatal.** Scan only the commit's changed files (`git diff-tree`); run the
   providers only on those; never block the developer.
 - **Team freshness ≠ local freshness.** Local hook = fast personal feedback. **Shared truth
-  = CI on push to main**, publishing the index/report, restoring `index.db` as a cache
-  artifact keyed on tree hash to avoid a cold full scan.
+  = CI on push to main**, publishing the index/report and restoring the cache artifacts
+  (below) to avoid a cold full scan.
 
 ### CI integration
 
 CI runs the cold/full path but caches it the way the hook caches the warm path:
 
-- **Restore** `.comment-finder/index.db` from the CI cache, keyed on `(tree_hash +
-  cf_ruleset_version + provider_versions + config_hashes)` — the same comparability key as
-  the baseline (§5). A hit means only files changed since the cached tree need provider runs.
+- **Restore — two artifacts, two keys** (§6 two-layer cache). `inputs.db` is keyed on
+  `(provider_versions + config_hashes + inputs_schema_version)` — *not* the CF binary version —
+  so a CF upgrade that only bumps the index layout still **reuses the expensive provider results
+  and embeddings**, never re-running eslint over the whole tree. `index.db` is keyed on the full
+  comparability key `(tree_hash + cf_ruleset_version + provider_versions + config_hashes)` (the
+  baseline's key, §5); on a miss it is **re-derived from the restored `inputs.db`**, not
+  cold-scanned. A `tree_hash` hit means only changed files need provider runs.
 - **Diff vs. the committed baseline** — fail on findings at or above `fail_on` that aren't
   baselined; a `PARTIAL` provider (§5) downgrades the verdict to *degraded* rather than
   passing silently.
 - **Publish** — SARIF to code-scanning (§8), a markdown summary, the JSONL artifact, and the
-  updated `index.db` as the next cache entry.
+  updated `inputs.db` + `index.db` as the next cache entries.
 
 Because findings are canonically ordered and the comparability key is recorded, two CI runs
 on identical inputs produce byte-identical reports.
@@ -760,7 +790,156 @@ interface, in the same adapter spirit as providers.
 
 ---
 
-## 10. Resolved decisions
+## 10. Tech stack & distribution
+
+### Dependency stack
+
+Consolidated — every framework the engine builds on, its role, and how it's controlled.
+External *provider* binaries are §5 (fetched/cached at runtime, never linked).
+
+| Dependency | Role | Control |
+|---|---|---|
+| **tree-sitter** + grammars (python · typescript · javascript · bash) | comment extraction; the parse-invariance re-parse (§5) | grammar versions pinned; bumps gated by golden-file tests (§11) |
+| **`ignore`** | file walk + `.gitignore` / `.ignore` (ripgrep's engine, §3) | — |
+| **rayon** | work-stealing parallelism for the native pass (§6) | worker count = impl-tuned (§14) |
+| **rusqlite** (bundled SQLite, `load_extension` on) | storage; sole writer; WAL (§6) | bundled, not system SQLite — version-matched to sqlite-vec |
+| **SQLite FTS5** | keyword search (§6) | built into bundled SQLite |
+| **sqlite-vec** | vector similarity (§6) | per-platform artifact, shipped with the binary, version-matched |
+| **fastembed-rs / `ort`** (ONNX Runtime) | local embeddings (§6) | model `content_hash`-keyed; model version is part of the embedding key |
+| **git access** (`gix` / gitoxide) | blame enrichment, repo-root resolution, changed-file sets (§3, §7) | pure-Rust; `git2` / CLI fallback is an impl detail |
+| **MCP server** (Rust SDK, `rmcp`) | the agent surface (§4a) — *the product* | verbs 1:1 with CLI; surface stability tiers (§11) |
+| **CLI framework** (`clap`) | verb parsing + JSON output (§4b, §8) | — |
+| **RFC 9535 JSONPath lib** | manifest extraction (§5) | concrete lib pinned at build (§14) |
+| **`octocrab` / Jira / GitLab clients** | `comment-to-issue` backends (§9) | adjacent feature; pluggable |
+
+The hot-path stack (tree-sitter · `ignore` · rayon · rusqlite) is all native Rust — no runtime,
+no GC, ripgrep-class. The only non-Rust runtime is the **eslint Node stack** (§5), isolated as
+the one Tier-2 native provider and fetched only when JS/TS is in scope. `gix`, `rmcp`, `clap`,
+and the JSONPath lib are the recommended defaults, finalized in planning.
+
+### Distribution & install
+
+- **Primary channel: `cargo`.** `cargo install commenter-cat` → the `cf` binary. Published to
+  crates.io; `Cargo.lock` committed for a reproducible build.
+- **Prebuilt binaries** via `cargo-dist` + GitHub Releases, installable with
+  `cargo binstall commenter-cat`, so non-Rust users skip compilation. Each release carries the
+  matching per-platform sqlite-vec + ONNX artifacts.
+- **Supported platforms — Linux · macOS · Windows**, tier-1:
+
+| OS | Arch | Target triple |
+|---|---|---|
+| Linux | x86_64 | `x86_64-unknown-linux-gnu` (+ `-musl` for a static build) |
+| Linux | aarch64 | `aarch64-unknown-linux-gnu` |
+| macOS | Apple Silicon | `aarch64-apple-darwin` |
+| macOS | Intel | `x86_64-apple-darwin` |
+| Windows | x86_64 | `x86_64-pc-windows-msvc` |
+
+- **The native-artifact matrix is the real packaging work:** sqlite-vec and the ONNX runtime are
+  per-`(os, arch)` and must be version-matched to the bundled SQLite / `ort`. CI builds and
+  attaches all five targets; a missing artifact **fails the release**, never ships degraded.
+- **Windows specifics:** CRLF line endings shift byte-offset coordinates and comment extraction —
+  handled in the native pass and explicitly tested (§11); `x86_64-pc-windows-msvc` is the
+  supported toolchain.
+- **Not bundled:** external provider binaries (ruff, shellcheck, gitleaks, eslint + Node) —
+  fetched + cached per §5, pinned by version/hash. Installing `cf` installs the engine; providers
+  arrive on first `check`.
+
+### Security & trust model
+
+Consolidated from §§5–9 — CF is **local-first**; nothing leaves the machine except two opt-in
+egress paths.
+
+| Surface | Stance |
+|---|---|
+| **Secrets** | gitleaks finds secrets-in-comments (§5); CF never *stores* them. Issue-tracker auth uses host credentials (`gh` / env / secrets-manager), **never** config or index (§9). |
+| **Embeddings** | computed locally (ONNX); comments — proprietary context — are **never** shipped to an embedding API (§6). |
+| **Manifests** | a manifest declares a *command to spawn*, so installing a third-party one is a trust decision (like a git hook). **No arbitrary code** in manifests (§5); the provider binary is pinned by version/hash so an approved adapter can't silently change what it runs. |
+| **Provider subprocesses** | bounded pool + per-provider timeout; CF owns the file universe (`cf_scope`), a provider may only *veto* within it, never widen it (§5). |
+| **Write path** | `apply_edit` / `remove` only — comment-only, under parse-invariance + write-protection-by-kind (§4a). CF never performs arbitrary file writes on an agent's behalf. |
+| **Supply chain** | committed `Cargo.lock`; pinned provider versions + hashes; the Node stack pins a full lockfile (§5). |
+| **Egress (opt-in only)** | `comment-to-issue` (host creds) and CI SARIF upload (§8). The default local flow has zero network egress. |
+
+---
+
+## 11. Lifecycle — maintenance, versioning & testing
+
+### Maintenance surface
+
+The recurring upkeep, made explicit so planning budgets for it. **The manifest-first design (§5)
+is the deliberate lever:** most provider maintenance is a declarative TOML edit + a contract-test
+run, not a code change.
+
+| Surface | What drifts | Mitigation in the design |
+|---|---|---|
+| **Provider adapters** | ruff/eslint/shellcheck/gitleaks change rule IDs, JSON shape, severity scales each release | manifests are declarative TOML (§5); `provider_rule_id` lossless; **contract tests** (below) catch shape breaks; eslint Node-stack is the lone Tier-2 burden |
+| **tree-sitter grammars** | grammar updates, new language syntax | pinned grammar versions; **golden-file tests** catch extraction/mapping regressions before a bump |
+| **Canonical vocabulary** (`cf_ruleset_version`) | new rules/providers mapped to canonical ids / categories | versioned; part of the comparability key (§5); `cf doctor` surfaces drift |
+| **Native artifacts** (sqlite-vec · ONNX runtime + model) | per-platform builds, model refresh, SQLite-version match | version-matched per target (§10); embeddings keyed by `content_hash` + model version → controlled, not blanket, re-embed |
+| **Bundled SQLite** | security / feature updates | WAL + **cache-rebuild on `schema_version` mismatch** absorbs it (the DB is a cache, §6) |
+
+Residual hard maintenance — **the eslint Node stack** and the **per-platform native-artifact
+matrix** — is concentrated by design so the other ~80–90% stays declarative.
+
+### Versioning, schema migration & breaking-change policy
+
+CF has **several independently-versioned contracts**; conflating them is the trap. Each is
+versioned and evolved on its own rule. CF ships at **1.0.0** — no 0.x / beta, per §0.
+
+| Contract | Versioned by | Compatibility rule |
+|---|---|---|
+| **`cf` binary** | SemVer 2.0 (1.0+) | MAJOR = a breaking change to any *stable* contract below |
+| **MCP verbs + CLI** (the product, §4a) | product SemVer + per-verb **stability tier** (`stable` / `experimental`) | additive (new optional arg / new verb) = MINOR; removing or reshaping a *stable* verb's return = MAJOR; new capability lands `experimental` first. Agents pin a MAJOR. |
+| **JSONL `schema_version`** | integer | output contract; reader supports current + N−1; forward-only |
+| **SQLite cache** — `index` + `inputs` layer versions (§6) | integer each | `index.db` **rebuilt** from `inputs.db` on an index bump; `inputs.db` versioned separately, rarely bumps; **rebuild, never migrate** |
+| **`cf_ruleset_version`** | integer | bump = a *findings-comparability* event (re-baseline), surfaced by `cf doctor` — **not** a binary-breaking change |
+| **`manifest_version`** | integer (now `1`) | CF reads current + prior manifest major, so third-party adapters survive a CF upgrade |
+| **config `version`** | integer (now `1`) | unknown future version = hard error with guidance; deprecations warned ≥ 1 MINOR before removal |
+
+**Schema migration — rebuild over migrate**, leveraging the cache decision (§6):
+
+- **SQLite cache — two layers (§6):** `index.db` (derived) is **rebuilt** from `inputs.db` on an
+  index-schema bump — the deterministic native pass + cache reads, not a cold scan. `inputs.db`
+  (content-addressed provider results + embedding vectors) is **versioned separately and survives**
+  index bumps, so providers never re-run and the repo is never re-embedded. Only a rare `inputs.db`
+  schema bump forces a true cold rebuild — no fragile in-place migrations either way.
+- **Baseline file** (committed, shared truth, §5): cannot be rebuilt — it migrates in place.
+  `cf baseline migrate` upgrades the format; the format version is recorded in the file; CF reads
+  current + N−1.
+- **JSONL:** `schema_version`-tagged with a documented per-version changelog; forward-only.
+
+**Breaking-change discipline:**
+
+- A **≥ 1 MINOR deprecation window** with `cf doctor` + runtime warnings precedes any removal in
+  the next MAJOR.
+- **Provider version bumps are never CF breaking changes** — they're comparability events handled
+  by the key + `doctor` + baseline (§5). Upgrading ruff bumps `provider_version`, not CF's MAJOR.
+- Every release ships a changelog **per-contract** (binary · MCP · schema · ruleset · manifest).
+
+### Testing & validation strategy
+
+The product's two promises — **determinism** (same input → same findings) and **safe-write**
+(code byte-identical + behavior preserved) — are *proven*, not asserted. The safety guarantees
+are **property-tested**, not example-tested.
+
+| Layer | Tooling | Proves |
+|---|---|---|
+| **Unit** | `cargo test` | normalization, severity resolution, identity fingerprint, UTF-16 ↔ byte coordinate conversion, JSONPath extraction |
+| **Golden-file / snapshot** | `insta` | per-grammar extraction + mapping (`bound_symbol`, kind, ranges); per-provider JSON → `Finding[]` (recorded fixtures, version-decoupled) |
+| **Property-based** | `proptest` | **the load-bearing ones:** parse-invariance over arbitrary comment edits; `apply_edit` idempotence; identity stability (cosmetic edit preserves Tier-2, marker escalation breaks it); findings-ordering determinism |
+| **Provider contract** | shared harness | every adapter (manifest + native, incl. dogfooded built-ins) honors the §5 contract: JSON-only, coordinate mapping, run-state `SUCCESS/EMPTY/PARTIAL/SKIPPED`, failure ≠ zero |
+| **Integration** | fixture repos, pinned providers | end-to-end `cf check`: unified findings, suppression, baseline; the **graceful-degradation path** (provider absent → `SKIPPED`) explicitly tested |
+| **Reproducibility** | CI | identical `(tree_hash, cf_ruleset_version, provider_version, config_hash)` → byte-identical report across two runs **and across the OS matrix** |
+| **MCP surface** | agent-contract tests | token budget honored (`limit` / `cursor` / `truncated`); round-trip (`apply_edit` returns re-checked findings); write-protection-by-kind refusal |
+| **Performance regression** | `criterion` + `cf check --stats` | per-stage budget *shape* (§6) asserted in CI; native hot-path benches |
+
+**Principles:** mock only at seams (network → issue trackers, the clock) — **never** the parser or
+the DB; test against real tree-sitter and real SQLite (real systems tell the truth). CI runs the
+full suite on the **Linux · macOS · Windows** matrix (§10), because coordinates, path resolution,
+CRLF, and native artifacts are platform-sensitive.
+
+---
+
+## 12. Resolved decisions
 
 | Decision | Resolution |
 |---|---|
@@ -780,10 +959,16 @@ interface, in the same adapter spirit as providers.
 | **Mapping** | No heuristic: doc by language standard (PEP 257 / JSDoc adjacency), non-doc by line geometry; blank-line adjacency residual (§3). |
 | **Identity** | Composite `(bound_symbol, kind, cosmetic_fingerprint)`; tiered match — cosmetic/precise for suppression, fuzzy opt-in for issue/blame (§4). |
 | **Config** | TOML, walk-up + hierarchical cascade, `CF_*` env, XDG global, versioned/validated. |
-| **sqlite-vec** | Core. Hybrid FTS5 + vector; engine-local ONNX embeddings (§6). |
+| **sqlite-vec** | Core. Hybrid FTS5 + vector; engine-local ONNX embeddings. **Two-layer cache** — content-addressed `inputs.db` (survives) + derived `index.db` (rebuilt, never migrated) (§6, §11). |
 | **Name** | **Commenter-Cat** — kept: `cf` binary, "CF" abbrev, `cf:` directive, `.comment-finder/` all cohere with it (renaming to the repo's *Commenter-Cat* would orphan ~20 "CF" usages for a cosmetic gain). Reversible if brand > coherence. `cf` collides with Cloud Foundry's CLI; `comment-finder` is the long-form alias. |
 | **Performance** | Two regimes — warm/incremental interactive (provider-result cache the lever), cold provider-bound + rayon-parallel; memory O(workers), not repo size; `cf check --stats` per-stage (§6). |
-| **CI** | Restore `.comment-finder/index.db` keyed on `(tree_hash + comparability key)`; incremental on hit; publish SARIF + report + new cache; diff vs. committed baseline; `PARTIAL` ⇒ degraded verdict (§7). |
+| **CI** | Restore two artifacts — `inputs.db` (provider/config-keyed, reused across CF upgrades) + `index.db` (full comparability key, re-derived on miss); incremental on hit; publish SARIF + report + new cache; diff vs. committed baseline; `PARTIAL` ⇒ degraded verdict (§7). |
+| **Tech stack** | Native-Rust hot path — tree-sitter · `ignore` · rayon · rusqlite (FTS5 + sqlite-vec) · ONNX; agent surface via `rmcp`, git via `gix`, CLI via `clap`. Full table §10. |
+| **Distribution** | **`cargo`** — `cargo install` (crates.io) + prebuilt binaries (`cargo-dist` / `binstall`); per-platform sqlite-vec + ONNX artifacts bundled, version-matched (§10). |
+| **Platforms** | **Linux · macOS · Windows** (x86_64 + aarch64; Windows x86_64). CRLF + the native-artifact matrix explicitly tested (§10–§11). |
+| **Versioning** | SemVer **1.0+** (no 0.x); **independently-versioned contracts** (binary · MCP stability tiers · `schema_version` · `cf_ruleset_version` · `manifest_version`); **cache rebuilds, never migrates**; provider bumps ≠ CF breaks (§11). |
+| **Maintenance** | Manifest-first turns most provider upkeep into declarative TOML + contract tests; residual hard surface = eslint Node stack + per-platform artifacts (§11). |
+| **Testing** | Layered — unit + `insta` golden-files + `proptest` (parse-invariance, determinism) + adapter contract + integration + reproducibility + MCP-surface + perf; OS-matrix CI (§11). |
 
 ### Configuration sketch
 
@@ -823,7 +1008,7 @@ default_format = "terminal"         # terminal | jsonl | sarif | markdown | csv
 
 ---
 
-## 11. Rejected alternatives
+## 13. Rejected alternatives
 
 | Option | Verdict | Why |
 |---|---|---|
@@ -846,15 +1031,17 @@ default_format = "terminal"         # terminal | jsonl | sarif | markdown | csv
 
 ---
 
-## 12. Status
+## 14. Status
 
 Every architectural and operational gap from prior passes is **resolved** and folded into
-§§1–11. The **product focus** is now fixed — the live-session agent loop (§4a) is the center
-of gravity, and the agent surface is specified to match: three-verb organization, token
-economy (ranked / bounded / drillable returns), the find→update→re-check round trip, and
-safe-apply hardened with **write-protection by kind** (§4a, §5). Pipeline features
-(`comment-to-issue`, export, CI) are positioned as adjacent. What remains is
-**implementation-tuning**, decided in code rather than design:
+§§1–13. The **product focus** is fixed — the live-session agent loop (§4a) is the center of
+gravity, the agent surface is specified to match (three-verb organization, token economy, the
+find→update→re-check round trip, safe-apply hardened with **write-protection by kind**), and the
+**product-information layer is now complete**: tech stack, distribution (`cargo`, three-OS
+matrix), security/trust (§10), the maintenance surface, the versioning + schema-migration +
+breaking-change policy, and the layered testing strategy (§11). Pipeline features
+(`comment-to-issue`, export, CI) remain adjacent. What remains is **implementation-tuning**,
+decided in code rather than design:
 
 - Exact rayon worker counts, subprocess-pool size, and per-provider timeout values.
 - The concrete RFC 9535 JSONPath library + the SARIF→`Finding` mapping table.
@@ -864,4 +1051,5 @@ safe-apply hardened with **write-protection by kind** (§4a, §5). Pipeline feat
   is the instrument).
 - Per-tracker API field mappings for `comment-to-issue` (GitHub / Jira / GitLab).
 
-The design is complete; the next step is the build.
+The design and product-information layer are complete; the next step is **product planning**,
+then the build.
