@@ -1,0 +1,89 @@
+# Release — prebuilt binaries for the five tier-1 targets (Idea §10).
+#
+# Source of truth is `dist-workspace.toml`; `dist generate` keeps this file in
+# sync. The matrix below mirrors that config: if ANY target fails to build, the
+# release fails (never ship a partial matrix). The `cf` binary statically links
+# sqlite-vec (no side artifact) and fetches the ONNX model on first use, so each
+# job's artifact is the self-contained binary + its checksum.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      # No fail-fast: a single broken target must fail the release, but we want
+      # every target's status, not just the first failure.
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cross-compilation toolchain (Linux aarch64 / musl)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
+      - uses: Swatinem/rust-cache@v2
+      - name: Build cf
+        run: cargo build --release -p cf-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="cf"; ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          src="target/${{ matrix.target }}/release/${bin}${ext}"
+          # A missing binary for this target fails the release (never degrade).
+          test -f "$src" || { echo "::error::missing build artifact for ${{ matrix.target }}"; exit 1; }
+          pkg="cf-${{ matrix.target }}"
+          mkdir -p "dist/$pkg"
+          cp "$src" "dist/$pkg/"
+          ( cd dist && tar czf "${pkg}.tar.gz" "$pkg" && sha256sum "${pkg}.tar.gz" > "${pkg}.tar.gz.sha256" )
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-${{ matrix.target }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    name: publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach binaries to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
