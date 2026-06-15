@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Two-layer per-project SQLite cache with FTS5 keyword and `sqlite-vec` semantic search
 - Local ONNX embeddings (fastembed/ort), never shipping comments to an external API
 - Filter-up suppression via `cf:*` directives and a committed Tier-2 baseline
+- `cf suppressions export` materializes CF's suppression set into each tool's native directives (`# noqa`, `eslint-disable-next-line`, `# shellcheck disable`, `# gitleaks:allow`), merged per line and written through the parse-invariant applier; idempotent, CF-native findings skipped
+- `cf issues sync` files flagged (marker) comments to the tracker, defaulting to a dry-run plan and filing only under `--apply`; cross-run idempotency via a committed ledger (`comment-finder.issues.toml`) keyed on Tier-4 comment identity
+- `cf check --show-suppressed` audit view, and `--stats` per-stage timing breakdown (walk / native / providers / fuse / index / total)
 - Output renderers: JSONL (canonical), terminal, SARIF 2.1.0, Markdown, and CSV, with CI exit codes
 - Git cache-warmer hooks (`cf install-hooks`) and CI integration with a two-key artifact cache
 - `comment-to-issue` backend (GitHub via `gh`), idempotent on stable comment identity
@@ -30,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `cf check` applies the unified suppression pass (inline `cf:*` directives + committed baseline): suppressed findings remain in the index but are hidden from the default view and never gate CI, surfaced only under `--show-suppressed`
 - The native pass (walk → extract → map → markers) fans out across CPU cores via `rayon`, preserving deterministic, sorted output
 - Provider results are cached in the content-addressed `inputs.db` (keyed on input content + resolved tool version), so `cf check` never re-runs a provider on an unchanged tree — gitleaks no longer rescans every run; `--no-cache` bypasses the cache and `--stats` reports cache hits vs runs
 

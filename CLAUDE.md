@@ -66,11 +66,24 @@ Version/edition/MSRV are workspace-inherited — bump in the root `Cargo.toml`
 
 ## CLI status (reality vs. plan)
 
-`cf suppressions` and `cf issues` parse but return an explicit "wire deliberately" error in
-`cf-cli/src/cli/verbs.rs` — `suppressions export` mutates source (and depends on a suppression
-pass `check` does not yet apply); `issues sync` is network + `gh`, outward-facing. Both engine
-modules exist and are tested. End-to-end working verbs: `check`, `candidates`, `doctor`,
-`query`, `context`, `apply-edit`, `remove`, `baseline`, `mcp`, `install-hooks`.
+Every verb is wired end to end: `check`, `candidates`, `doctor`, `query`, `context`,
+`apply-edit`, `remove`, `baseline`, `suppressions export`, `issues sync`, `mcp`,
+`install-hooks`. `cf check` now applies the unified suppression pass (inline `cf:*`
+directives + committed baseline): suppressed findings stay in the index but are hidden
+from the default view and never gate CI; `--show-suppressed` is the audit view. Two
+source/network verbs carry deliberate guardrails:
+
+- `cf suppressions export` mutates source — it materializes CF's suppression set into each
+  tool's native directives (`# noqa`, `eslint-disable-next-line`, `# shellcheck disable`,
+  `# gitleaks:allow`), **merged per line** (`# noqa: D400, D415`) and written through the
+  parse-invariant applier (a code-altering insert aborts). Idempotent on the directive
+  marker; CF-native findings have no native directive and are skipped.
+- `cf issues sync` is network + `gh`, outward-facing — so it **defaults to a dry-run plan**
+  and only files under `--apply`. Idempotency is a **committed** ledger
+  (`comment-finder.issues.toml`, beside the baseline, `LEDGER_FILENAME`) keyed on Tier-4
+  identity, so a marker filed by anyone is never re-filed. Forward filing only;
+  closed-issue reconciliation (removing a resolved marker comment via the applier — the
+  tested `issues::sync_resolution`) is the one deliberate follow-up.
 
 ## Docs
 

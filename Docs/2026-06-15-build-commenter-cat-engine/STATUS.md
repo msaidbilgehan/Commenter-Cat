@@ -1,6 +1,6 @@
 ---
 plan_slug: 2026-06-15-build-commenter-cat-engine
-last_updated: 2026-06-16T00:40:00Z
+last_updated: 2026-06-16T02:30:00Z
 schema_version: 1
 tasks:
   "1.1":
@@ -541,6 +541,27 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
 
 ## Recent Activity
 
+- 2026-06-16T02:30:00Z — **closed the remaining open verbs** (the dogfood follow-up's
+  last items). (1) **`--stats` per-stage timing** — `CheckResult` now carries a `Timings`
+  struct (walk / native / providers / fuse), reported alongside the cache line as the §6
+  budget *shape*. (2) **Suppression pass in `cf check`** — `ops::suppress::apply` runs the
+  unified pass (inline `cf:*` directives + committed baseline) over the fused comments;
+  suppressed findings stay in the index but are hidden from the default view and never
+  gate CI, surfaced under `--show-suppressed`. (3) **`cf suppressions export`** —
+  `ops::suppress::export::export_suppressions` materializes the suppression set into native
+  tool directives, **merged per line** (`# noqa: D400, D415`, not two `# noqa:` ruff would
+  not honor), trailing (ruff/gitleaks) or line-above (eslint/shellcheck), through the
+  parse-invariant applier (a code-altering insert aborts the file untouched); idempotent on
+  the directive marker. (4) **`cf issues sync`** — forward-files marker comments to the
+  tracker via `GhCliBackend`, **dry-run by default**, filing only under `--apply`; a new
+  **committed** ledger (`comment-finder.issues.toml`, `issues::ledger_file`) keyed on Tier-4
+  identity gives cross-run/cross-machine idempotency (a marker filed by anyone is never
+  re-filed). Verified e2e: suppression hides + never gates / audit reveals; export writes a
+  merged idempotent `# noqa`; issues dry-run is offline and the ledger skips a pre-filed
+  identity. Gate: 344 tests (was 338, +6), clippy `-D warnings`, fmt. **Open:** closed-issue
+  reconciliation (`issues::sync_resolution`, tested) is wired in the engine but not driven
+  by `cf issues sync` yet — it removes a resolved marker comment from source, so it is left
+  as a deliberate follow-up.
 - 2026-06-16T00:40:00Z — **wired the §6 provider-result cache into `cf check`**
   (closes the dogfood gitleaks-perf open observation). The content-addressed cache
   (`inputs.db` `provider_results`, keyed `(content_hash, provider, version)`) was
