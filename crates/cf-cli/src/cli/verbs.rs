@@ -3,10 +3,12 @@
 //! `check` runs the native pass + built-in providers, renders, and **persists**
 //! the unified records into the two-layer index. The index-backed verbs (`query`,
 //! `context`, `apply-edit`, `remove`) open that index via a [`Session`] and run
-//! the find→understand→update loop. `baseline`/`suppressions` route to Phase 8.5,
-//! `issues` to Phase 9. Output goes to stdout; the return value is the process
-//! exit code (Idea §8).
+//! the find→understand→update loop. `baseline` snapshots/prunes the committed
+//! baseline; `suppressions export` (source-mutating) and `issues sync` (network)
+//! return an explanatory error until wired deliberately. Output goes to stdout;
+//! the return value is the process exit code (Idea §8).
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -15,13 +17,19 @@ use cf_core::config;
 use cf_core::error::{CfError, CfResult};
 use cf_core::finding::Origin;
 use cf_core::severity::Severity;
+use cf_engine::ops::baseline;
+use cf_engine::ops::check::CheckResult;
 use cf_engine::ops::index::{self, Session};
 use cf_engine::ops::{self};
-use cf_engine::provider::{builtins, RuleProvider};
+use cf_engine::provider::{builtins, RuleProvider, RunState};
 use cf_engine::render;
 use cf_engine::surface::{ranking, roundtrip, token_economy};
 
-use super::{Cli, Command};
+use super::{BaselineAction, Cli, Command};
+
+/// Cap on the number of distinct unattached rule ids listed in diagnostics, so a
+/// pathological repo cannot flood stderr.
+const MAX_UNATTACHED_RULES_SHOWN: usize = 12;
 
 /// Runs the parsed CLI, returning the process exit code.
 ///
@@ -55,12 +63,17 @@ pub(crate) fn run(cli: Cli) -> CfResult<i32> {
             comment_id,
             allow_significant,
         } => run_remove(&comment_id, allow_significant),
-        Command::Baseline { .. } | Command::Suppressions { .. } => Err(CfError::config(
-            "baseline/suppressions management is wired in Phase 8.5 — run `cf check` for findings",
+        Command::Baseline { action } => run_baseline(&action),
+        Command::Suppressions { .. } => Err(CfError::config(
+            "`cf suppressions export` writes native directives into source and depends on the \
+             suppression pass being applied during `cf check` (not yet wired) — see ops::suppress",
         )),
         Command::Mcp => run_mcp(),
         Command::InstallHooks => run_install_hooks(),
-        Command::Issues { .. } => Err(phase9("issues sync")),
+        Command::Issues { .. } => Err(CfError::config(
+            "`cf issues sync` files/closes tracker issues (network + `gh`, outward-facing) and \
+             needs the issue ledger persisted to the index — wire deliberately, see issues::",
+        )),
     }
 }
 
@@ -101,6 +114,11 @@ fn run_check(
     let rendered = render::render(&result.comments, format)?;
     print(&rendered);
 
+    // Idea §5: a degraded guarantee must be *visible, not silent*. Findings on
+    // stdout; provider trouble + symbol-only findings to stderr so the operator
+    // never reads a clean report that was actually missing a provider's results.
+    report_diagnostics(&result);
+
     // Persist the unified records into the two-layer index so the find/understand/
     // update verbs resolve against a real index (Idea §6).
     index::persist(&root, &result.comments, &index::default_embedder())?;
@@ -112,6 +130,47 @@ fn run_check(
         config.severity.fail_on
     };
     Ok(render::ci_exit_code(&result.comments, fail_on))
+}
+
+/// Writes provider run-state and unattached-finding diagnostics to stderr.
+///
+/// `cf check` reports findings on stdout, but a provider that crashed
+/// (`PARTIAL`) or never ran (`SKIPPED`) produces *no* findings — indistinguishable
+/// from a clean result unless it is surfaced. Idea §5 makes this non-negotiable:
+/// "a degraded guarantee is visible, not silent." Unattached findings (e.g.
+/// doc-coverage on an undocumented symbol — a real finding with no comment to
+/// hang on) would otherwise be dropped from the comment-centric output entirely.
+fn report_diagnostics(result: &CheckResult) {
+    for (provider, state) in &result.run_states {
+        match state {
+            RunState::Partial => eprintln!(
+                "cf: warning: provider {provider:?} PARTIAL — it ran but its output was unusable; \
+                 its findings are UNAVAILABLE (not zero). Re-run with --strict to fail the build."
+            ),
+            RunState::Skipped => eprintln!(
+                "cf: note: provider {provider:?} skipped (not installed or unavailable) — \
+                 its language's deep rules were not checked."
+            ),
+            RunState::Success | RunState::Empty => {}
+        }
+    }
+
+    if !result.unattached.is_empty() {
+        eprintln!(
+            "cf: note: {} provider finding(s) target a symbol with no comment \
+             (e.g. doc-coverage on an undocumented item) and are not shown in the comment view:",
+            result.unattached.len()
+        );
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for finding in &result.unattached {
+            *counts
+                .entry(finding.canonical_rule_id.as_str())
+                .or_insert(0) += 1;
+        }
+        for (rule, count) in counts.iter().take(MAX_UNATTACHED_RULES_SHOWN) {
+            eprintln!("cf:   {rule}: {count}");
+        }
+    }
 }
 
 /// `cf candidates` — the native worklist (rot + markers), ranked and bounded.
@@ -366,11 +425,76 @@ fn print(text: &str) {
     let _ = stdout.write_all(text.as_bytes());
 }
 
-/// An error for verbs implemented in the adjacent-integrations phase.
-fn phase9(verb: &str) -> CfError {
-    CfError::config(format!(
-        "`cf {verb}` lands in Phase 9 (adjacent integrations)"
-    ))
+/// `cf baseline accept|prune` — manage the committed `comment-finder.baseline.toml`.
+///
+/// `accept` snapshots the current findings (Tier-2 identities) into the baseline;
+/// `prune` drops entries whose findings no longer occur. The baseline lives at the
+/// repo root (committed, outside the gitignored cache) and is the diff anchor the
+/// CI path consumes (Idea §5).
+fn run_baseline(action: &BaselineAction) -> CfResult<i32> {
+    let root = root_for(&[])?;
+    let config = config::discover(&root)?;
+    let providers = builtins::load_all()?;
+    let provider_refs: Vec<&dyn RuleProvider> = providers
+        .iter()
+        .map(|provider| provider as &dyn RuleProvider)
+        .collect();
+    let result = ops::check::check(&root, &config, &provider_refs)?;
+    report_diagnostics(&result);
+
+    let identities = current_identities(&result);
+    let path = root.join(baseline::BASELINE_FILENAME);
+
+    match action {
+        BaselineAction::Accept => {
+            let snapshot = baseline::accept(&identities);
+            baseline::save(&snapshot, &path)?;
+            print(&format!(
+                "Baseline accepted: {} finding identit(ies) snapshotted to {}.\n",
+                snapshot.entries.len(),
+                path.display(),
+            ));
+        }
+        BaselineAction::Prune => {
+            if !path.exists() {
+                return Err(CfError::config(format!(
+                    "no baseline at {} to prune — run `cf baseline accept` first",
+                    path.display()
+                )));
+            }
+            let existing = baseline::load(&path)?;
+            let before = existing.entries.len();
+            let pruned = baseline::prune(&existing, &identities);
+            baseline::save(&pruned, &path)?;
+            print(&format!(
+                "Baseline pruned: removed {} stale entr(ies); {} remain in {}.\n",
+                before - pruned.entries.len(),
+                pruned.entries.len(),
+                path.display(),
+            ));
+        }
+    }
+    Ok(render::EXIT_OK)
+}
+
+/// The Tier-2 `(bound_symbol, cosmetic_fingerprint, provider_rule_id)` identity of
+/// every current finding — the keys the baseline snapshots and matches on (Idea §5;
+/// the CI diff matches both provider and canonical rule ids, so the precise
+/// `provider_rule_id` is stored).
+fn current_identities(result: &CheckResult) -> Vec<baseline::SuppressedIdentity> {
+    let mut identities = Vec::new();
+    for comment in &result.comments {
+        let symbol = comment.bound_symbol.as_ref().map(|s| s.as_str().to_owned());
+        let fingerprint = comment.cosmetic_fingerprint.clone().unwrap_or_default();
+        for finding in &comment.findings {
+            identities.push((
+                symbol.clone(),
+                fingerprint.clone(),
+                finding.provider_rule_id.clone(),
+            ));
+        }
+    }
+    identities
 }
 
 #[cfg(test)]
@@ -399,6 +523,35 @@ mod tests {
             strict,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_baseline_accept_snapshots_and_prune_keeps_live() {
+        // `cf baseline accept` snapshots the current findings' Tier-2 identities;
+        // pruning against the same findings keeps every entry (nothing is stale).
+        let dir = seeded_repo();
+        let config = cf_core::config::ResolvedConfig::default();
+        let no_providers: [&dyn RuleProvider; 0] = [];
+        let result = ops::check::check(dir.path(), &config, &no_providers).unwrap();
+
+        let identities = current_identities(&result);
+        assert!(
+            !identities.is_empty(),
+            "the TODO marker yields a baseline identity"
+        );
+
+        let path = dir.path().join(baseline::BASELINE_FILENAME);
+        let snapshot = baseline::accept(&identities);
+        baseline::save(&snapshot, &path).unwrap();
+
+        let loaded = baseline::load(&path).unwrap();
+        assert_eq!(loaded.entries.len(), snapshot.entries.len(), "round-trips");
+        let pruned = baseline::prune(&loaded, &identities);
+        assert_eq!(
+            pruned.entries.len(),
+            loaded.entries.len(),
+            "no entry is stale when findings are unchanged"
+        );
     }
 
     #[test]

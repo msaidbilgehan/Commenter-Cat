@@ -131,7 +131,8 @@ pub(crate) enum Command {
     /// Serve the MCP protocol over stdio (the agent-facing product, Idea §4a).
     Mcp,
 
-    /// Install the git hooks (pre-commit / pre-push).
+    /// Install the cache-warmer git hooks (post-commit / -checkout / -merge /
+    /// -rewrite) via `core.hooksPath` (Idea §7).
     InstallHooks,
 
     /// Sync flagged comments to the issue tracker.
