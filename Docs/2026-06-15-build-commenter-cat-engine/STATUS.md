@@ -1,6 +1,6 @@
 ---
 plan_slug: 2026-06-15-build-commenter-cat-engine
-last_updated: 2026-06-15T23:40:00Z
+last_updated: 2026-06-15T23:55:00Z
 schema_version: 1
 tasks:
   "1.1":
@@ -541,6 +541,40 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
 
 ## Recent Activity
 
+- 2026-06-15T23:55:00Z — **post-dogfood checkpoint: wired `cf baseline`, fixed
+  `install-hooks` help.** (1) The `cf install-hooks` clap help said *"pre-commit /
+  pre-push"* but the verb installs the cache-warmer **post-commit / -checkout /
+  -merge / -rewrite** hooks via `core.hooksPath` (task 9.2; Idea §7) — corrected
+  to match reality. (2) Wired `cf baseline accept|prune` end to end: `run_baseline`
+  runs `check`, derives each finding's Tier-2 identity (`bound_symbol`,
+  `cosmetic_fingerprint`, `provider_rule_id`) via `current_identities`, then
+  `accept` snapshots / `prune` drops-stale into the committed
+  `comment-finder.baseline.toml`. Verified on a fixture (accept → 4 identities
+  written canonically; prune → 0 stale). `cf suppressions export` (mutates *source*
+  + depends on a suppression pass `check` does not yet apply) and `cf issues sync`
+  (network + `gh`, outward-facing) deliberately return explicit "wire deliberately"
+  errors rather than silent stubs — the engine modules are sound; enabling them is
+  a deliberate act. +1 test (`test_baseline_accept_snapshots_and_prune_keeps_live`,
+  333→334), clippy `-D warnings`, fmt clean. NOTE: the root `CLAUDE.md` "CLI status"
+  section still lists `cf baseline` as not-wired — stale after this change (the file
+  is owner-authored; left untouched, flagged for correction).
+- 2026-06-15T21:40:00Z — **dogfood pass on `~/Workspace/AutoTravian`** (1.8 GB,
+  Python/TS/JS/Shell, non-git). The native pass was clean (15,735 comments,
+  markers + rot correct) but every external-provider finding was silently
+  missing. Root-caused + fixed four bugs that broke the provider→finding pipeline
+  end to end (see CHANGELOG `dogfood-autotravian-provider-fixes`): (A) absolute
+  vs repo-relative path mismatch → findings never attached; (B) gitleaks
+  `detect --report-path /dev/stdout {files}` broken on 8.x → silent PARTIAL,
+  rewired to `gitleaks dir … --report-path - {root}` + a new `{root}` manifest
+  token; (C) zero-width findings on a comment's first byte missed by strict
+  `overlaps` → added `Range::contains_byte` + point-containment; (D) CLI dropped
+  `run_states`/`unattached` → now surfaced on stderr (Idea §5). Added provider
+  finding scope-filtering (CF owns the universe). Verified on a seeded fixture
+  (ERA001 + 2 gitleaks secrets fuse onto one comment) and on AutoTravian (9 real
+  in-scope secrets surfaced, vendored-dep hits filtered). Gate green: 333 tests
+  (was 328), clippy `-D warnings`, fmt. Open observations recorded in CHANGELOG
+  (gitleaks tree-scan perf; `.env` scope vs §3; sequential native pass; `--stats`
+  no-op).
 - 2026-06-15T00:00:00Z — plan written by planner-skill; all 52 tasks initialized to `queued`, `attempt: 0`.
 - 2026-06-15T10:05:00Z — claude-opus completed Phase 1 (tasks 1.1–1.4). Workspace scaffolded; CfError hierarchy, versioned-contract constants + ComparabilityKey, and the layered TOML config model landed in cf-core, plus the shared domain primitives (Language/Severity/CommentKind) the config model required. All Phase-1 validation gates pass.
 - 2026-06-15T11:25:00Z — claude-opus completed Phase 3 (tasks 3.1–3.4), run in its parallel track since it depends only on Phase 1. Canonical Finding model in cf-core: struct + Origin/Category/Fix/Range/FindingTarget, category-anchored 3-tier severity resolution, provider→byte-offset coordinate conversion (eslint UTF-16 trap), same-category dedup + canonical ordering. cf-core now 65 unit + 2 doc tests, all gates green. Phase 2 remains before Phase 4 (storage) can start.
