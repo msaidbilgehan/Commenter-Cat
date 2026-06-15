@@ -1,8 +1,17 @@
 # Built-in gitleaks provider (Idea §5 dogfooding) — secrets.
 # Every gitleaks hit is a `secret` (always critical, by the category anchor), so
 # `default_category` covers all rule ids without an enumerated map.
+#
+# Invocation notes (gitleaks 8.x):
+#  * `dir` is the modern no-git scan; the legacy `detect` ignored positional
+#    paths and only honored `--source`.
+#  * `--report-path -` writes the JSON report to stdout. `/dev/stdout` is
+#    rejected ("report path is not writable") on macOS, so `-` is required.
+#  * gitleaks takes a single `[path]`, so it scans `{root}` (project scope);
+#    CF then drops any finding outside the in-scope file set (ops::check).
+#  * `--no-banner` keeps the ASCII banner off stderr; stdout stays pure JSON.
 manifest_version = 1
-command = ["gitleaks", "detect", "--no-git", "--report-format", "json", "--report-path", "/dev/stdout", "{files}"]
+command = ["gitleaks", "dir", "--report-format", "json", "--report-path", "-", "--no-banner", "{root}"]
 format = "json"
 scope = "project"
 default_category = "secret"

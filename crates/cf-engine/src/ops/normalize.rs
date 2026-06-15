@@ -28,7 +28,7 @@ pub fn attach_findings(comments: &mut [Comment], findings: Vec<Finding>) -> Vec<
 }
 
 /// Whether `finding` belongs on `comment` — same file, then by bound symbol or
-/// by overlapping bytes (Idea §4).
+/// by location (Idea §4).
 fn attaches_to(comment: &Comment, finding: &Finding) -> bool {
     if comment.path != finding.file {
         return false;
@@ -38,7 +38,11 @@ fn attaches_to(comment: &Comment, finding: &Finding) -> bool {
             return true;
         }
     }
-    comment.range.overlaps(&finding.range)
+    // A provider finding usually carries a zero-width point (line+column → one
+    // byte), so attach when that point sits within the comment — including its
+    // first byte, where `overlaps` alone would miss ruff's `ERA001` on the `#`.
+    // Keep `overlaps` for wide findings that start before the comment.
+    comment.range.contains_byte(finding.range.start_byte) || comment.range.overlaps(&finding.range)
 }
 
 /// Dedups each comment's findings into canonical order (Idea §5 — same drift seen
@@ -108,6 +112,25 @@ mod tests {
             "ERA001",
         );
         assert!(attach_findings(&mut comments, vec![f]).is_empty());
+        assert_eq!(comments[0].findings.len(), 1);
+    }
+
+    #[test]
+    fn test_attach_zero_width_finding_at_comment_start() {
+        // ruff's ERA001 points a zero-width range at the comment's first byte
+        // (the `#`); strict `overlaps` misses it, point-containment attaches it.
+        let mut comments = [comment_at("a.py", Range::new(0, 30, 2, 2), Some("add"))];
+        let f = finding(
+            "a.py",
+            FindingTarget::Symbol(BoundSymbol::new("a.py")), // tool reports file, not "add"
+            Range::new(0, 0, 2, 2),
+            "ERA001",
+        );
+        let unattached = attach_findings(&mut comments, vec![f]);
+        assert!(
+            unattached.is_empty(),
+            "a finding on the comment's first byte attaches"
+        );
         assert_eq!(comments[0].findings.len(), 1);
     }
 

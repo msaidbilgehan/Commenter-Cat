@@ -13,7 +13,7 @@ pub mod mapping;
 pub mod sarif;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
@@ -35,6 +35,36 @@ const DEFAULT_CATEGORY: Category = Category::CommentStyle;
 
 /// The token in `command` replaced by the file list.
 const FILES_TOKEN: &str = "{files}";
+
+/// The token in `command` replaced by the scan root — for project-scoped tools
+/// that take a single directory argument (e.g. `gitleaks dir {root}`) rather than
+/// an explicit file list.
+const ROOT_TOKEN: &str = "{root}";
+
+/// Normalizes a tool-reported path to the repo-relative, `/`-separated form CF
+/// uses for comment records, so a provider finding can attach to its comment
+/// (Idea §4 — attachment is by `path` + range).
+///
+/// Tools echo the path they were handed, which CF passes as **absolute** — and
+/// some tools (ruff) canonicalize it, so on macOS a `/tmp/...` root resurfaces as
+/// `/private/tmp/...`. Matching that against `comment.path` (repo-relative) needs
+/// canonicalization on *both* sides, with graceful fallbacks when a path cannot
+/// be canonicalized (e.g. it no longer exists).
+fn relativize(file: &str, root: &Path, canonical_root: &Path) -> String {
+    let raw = Path::new(file);
+    let absolute = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        root.join(raw)
+    };
+    let canonical_file = absolute.canonicalize().unwrap_or(absolute);
+    let relative = canonical_file
+        .strip_prefix(canonical_root)
+        .or_else(|_| canonical_file.strip_prefix(root))
+        .or_else(|_| raw.strip_prefix(root))
+        .unwrap_or(raw);
+    relative.to_string_lossy().replace('\\', "/")
+}
 
 /// The manifest's output format (Idea §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -127,6 +157,12 @@ impl ManifestProvider {
         };
         let origin = Origin::from_token(&self.id);
         let coord = self.capabilities.coordinate_system;
+        // Canonicalize the root once; `relativize` reuses it per finding so the
+        // tool's absolute (possibly canonicalized) paths match `comment.path`.
+        let canonical_root = context
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| context.root.to_path_buf());
 
         let mut findings = Vec::with_capacity(raw.len());
         for entry in &raw {
@@ -150,11 +186,13 @@ impl ManifestProvider {
                 &origin,
                 context.severity_overrides,
             );
-            let range = self.range_for(coord, entry.line, entry.column, &file_text(&entry.file));
+            // Repo-relative path so the finding attaches to its comment (Idea §4).
+            let rel_file = relativize(&entry.file, context.root, &canonical_root);
+            let range = self.range_for(coord, entry.line, entry.column, &file_text(&rel_file));
 
             findings.push(Finding {
-                file: entry.file.clone(),
-                target: FindingTarget::Symbol(BoundSymbol::new(&entry.file)),
+                target: FindingTarget::Symbol(BoundSymbol::new(&rel_file)),
+                file: rel_file,
                 range,
                 origin: origin.clone(),
                 provider_rule_id,
@@ -195,14 +233,15 @@ impl ManifestProvider {
         Range::new(start_byte, start_byte, our_line, our_line)
     }
 
-    /// Expands `command`, replacing `{files}` with the file list.
-    fn build_args(&self, files: &[PathBuf]) -> Vec<String> {
+    /// Expands `command`, replacing `{files}` with the file list and `{root}`
+    /// with the scan root (for project-scoped tools that take a single dir).
+    fn build_args(&self, files: &[PathBuf], root: &Path) -> Vec<String> {
         let mut args = Vec::new();
         for token in &self.manifest.command {
-            if token == FILES_TOKEN {
-                args.extend(files.iter().map(|f| f.to_string_lossy().into_owned()));
-            } else {
-                args.push(token.clone());
+            match token.as_str() {
+                FILES_TOKEN => args.extend(files.iter().map(|f| f.to_string_lossy().into_owned())),
+                ROOT_TOKEN => args.push(root.to_string_lossy().into_owned()),
+                _ => args.push(token.clone()),
             }
         }
         args
@@ -219,7 +258,7 @@ impl RuleProvider for ManifestProvider {
     }
 
     fn run(&self, files: &[PathBuf], context: &ProviderContext<'_>) -> ProviderRun {
-        let args = self.build_args(files);
+        let args = self.build_args(files, context.root);
         let Some((binary, rest)) = args.split_first() else {
             return ProviderRun::skipped();
         };
@@ -360,6 +399,72 @@ coordinate_system = "1-based-utf8"
         let context = ProviderContext::new(Path::new("."), &overrides);
         let run = provider.run(&[PathBuf::from("a.py")], &context);
         assert_eq!(run.state, RunState::Skipped);
+    }
+
+    const ROOT_SCOPED: &str = r#"
+manifest_version = 1
+command = ["gitleaks", "dir", "--report-path", "-", "{root}"]
+format = "json"
+scope = "project"
+default_category = "secret"
+[[findings]]
+iterate = "$[*]"
+native_rule_id = "$.RuleID"
+message = "$.Description"
+file = "$.File"
+line = "$.StartLine"
+column = "$.StartColumn"
+[capabilities]
+coordinate_system = "1-based-utf8"
+"#;
+
+    #[test]
+    fn test_build_args_expands_root_token() {
+        let provider = ManifestProvider::from_toml("gitleaks", ROOT_SCOPED).unwrap();
+        let args = provider.build_args(&[PathBuf::from("ignored.py")], Path::new("/repo/here"));
+        // `{root}` → the single scan root; `{files}` is absent, so the file list
+        // is not appended (gitleaks takes one path, not a list).
+        assert_eq!(
+            args,
+            vec!["gitleaks", "dir", "--report-path", "-", "/repo/here"]
+        );
+    }
+
+    #[test]
+    fn test_normalize_relativizes_absolute_tool_paths() {
+        // The bug dogfooding surfaced: ruff/gitleaks echo the ABSOLUTE path CF
+        // hands them, which never equals the repo-relative `comment.path`, so no
+        // finding ever attached. After the fix `finding.file` is repo-relative.
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join("pkg")).unwrap();
+        let file = dir.path().join("pkg/app.py");
+        std::fs::write(&file, "# x = old()\n").unwrap();
+
+        let provider = ManifestProvider::from_toml("ruff", RUFF_LIKE).unwrap();
+        let overrides = BTreeMap::new();
+        let context = ProviderContext::new(dir.path(), &overrides);
+        // ruff reports the canonicalized absolute path it was given.
+        let absolute = file.canonicalize().unwrap();
+        let output = json!({ "results": [
+            { "code": "ERA001", "level": "warning", "message": "commented code",
+              "filename": absolute.to_string_lossy(), "location": { "row": 1, "column": 1 } }
+        ]});
+
+        let findings = provider
+            .normalize(&output, &context, |path| {
+                std::fs::read_to_string(dir.path().join(path)).ok()
+            })
+            .unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].file, "pkg/app.py",
+            "absolute tool path normalized to repo-relative"
+        );
+        // The target symbol is the same repo-relative path (attachment hinge).
+        match &findings[0].target {
+            FindingTarget::Symbol(symbol) => assert_eq!(symbol.as_str(), "pkg/app.py"),
+            other => panic!("expected symbol target, got {other:?}"),
+        }
     }
 
     #[test]

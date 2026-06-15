@@ -184,6 +184,18 @@ impl Range {
         self.start_byte < other.end_byte && other.start_byte < self.end_byte
     }
 
+    /// Whether `byte` falls within this (half-open) span — including the start.
+    ///
+    /// Used to attach a provider finding to the comment it points at (Idea §4).
+    /// Providers report a line+column that CF converts to a single byte offset, so
+    /// a finding range is often **zero-width**; a strict [`overlaps`](Self::overlaps)
+    /// then misses a finding sitting exactly on the comment's first byte (ruff's
+    /// `ERA001` points at the `#`). Point-containment is the correct attach test.
+    #[must_use]
+    pub const fn contains_byte(&self, byte: u32) -> bool {
+        self.start_byte <= byte && byte < self.end_byte
+    }
+
     /// The byte length of the span.
     #[must_use]
     pub const fn len_bytes(&self) -> u32 {
@@ -319,6 +331,15 @@ mod tests {
             "half-open: touching is not overlapping"
         );
         assert_eq!(a.len_bytes(), 10);
+    }
+
+    #[test]
+    fn test_range_contains_byte() {
+        let a = Range::new(4, 10, 1, 1);
+        assert!(a.contains_byte(4), "start byte is contained (attach hinge)");
+        assert!(a.contains_byte(9));
+        assert!(!a.contains_byte(10), "half-open: end byte is excluded");
+        assert!(!a.contains_byte(3));
     }
 
     #[test]

@@ -6,6 +6,7 @@
 //! findings to the comment they concern and dedup. "AI proposes, engine
 //! guarantees": the output is one unified record per comment (Idea §4, §5).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use cf_core::comment::Comment;
@@ -107,6 +108,13 @@ fn fuse(
         provider_findings.extend(run.findings);
     }
 
+    // CF owns the file universe (Idea §5): a project-scoped tool (e.g. gitleaks
+    // scanning `{root}`) may surface findings in files CF excluded
+    // (node_modules/.venv). Drop anything outside the in-scope walked set so a
+    // provider can never widen `cf_scope`, only veto within it.
+    let in_scope: HashSet<String> = files.iter().map(|path| repo_relative(path, root)).collect();
+    provider_findings.retain(|finding| in_scope.contains(&finding.file));
+
     // 3. Attach provider findings + dedup every comment's fused set.
     let unattached = normalize::attach_findings(&mut comments, provider_findings);
     normalize::dedup_comment_findings(&mut comments);
@@ -179,6 +187,70 @@ mod tests {
                 also_from: Default::default(),
             }])
         }
+    }
+
+    /// A provider that reports a finding for a file CF never walked (e.g. a
+    /// project-scoped tool reaching into `node_modules`).
+    struct OutOfScopeProvider {
+        capabilities: Capabilities,
+    }
+
+    impl RuleProvider for OutOfScopeProvider {
+        fn id(&self) -> &str {
+            "oos"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.capabilities
+        }
+        fn run(&self, _files: &[PathBuf], _ctx: &ProviderContext<'_>) -> ProviderRun {
+            ProviderRun::ran(vec![Finding {
+                file: "node_modules/dep/leak.js".to_owned(),
+                target: FindingTarget::Comment(CommentId::new("x")),
+                range: Range::new(0, 6, 1, 1),
+                origin: Origin::Other("gitleaks".to_owned()),
+                provider_rule_id: "gitleaks:aws-key".to_owned(),
+                canonical_rule_id: "aws-key".to_owned(),
+                category: Category::Secret,
+                severity: Severity::Critical,
+                severity_native: None,
+                message: "secret in a dependency".to_owned(),
+                fix: Fix::None,
+                url: None,
+                also_from: Default::default(),
+            }])
+        }
+    }
+
+    #[test]
+    fn test_out_of_scope_provider_finding_is_dropped() {
+        // CF owns the universe: a finding in a file CF did not walk is dropped
+        // entirely — not attached, not even surfaced as unattached (Idea §5).
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "x = 1\n");
+        let oos = OutOfScopeProvider {
+            capabilities: Capabilities {
+                scope: Scope::Project,
+                supports_fix: false,
+                supports_incremental: false,
+                supports_sarif: false,
+                coordinate_system: CoordinateSystem::tree_sitter(),
+            },
+        };
+        let providers: [&dyn RuleProvider; 1] = [&oos];
+        let result = check(repo.path(), &ResolvedConfig::default(), &providers).unwrap();
+
+        assert!(
+            result.unattached.is_empty(),
+            "out-of-scope finding is filtered before attachment, not surfaced"
+        );
+        assert!(
+            result
+                .comments
+                .iter()
+                .all(|comment| comment.findings.is_empty()),
+            "no comment carries the out-of-scope dependency finding"
+        );
+        assert_eq!(result.run_states[0].1, RunState::Success);
     }
 
     #[test]
