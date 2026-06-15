@@ -21,7 +21,7 @@ use crate::map::map_comments;
 use crate::markers::MarkerSet;
 use crate::ops::{normalize, triage};
 use crate::provider::{ProviderContext, RuleProvider, RunState};
-use crate::walk::{walk, WalkOptions};
+use crate::walk::{walk, walk_universe, WalkOptions, WalkedFile};
 
 /// The unified result of `cf check` (Idea §5).
 #[derive(Debug)]
@@ -45,17 +45,26 @@ pub fn check(
     config: &ResolvedConfig,
     providers: &[&dyn RuleProvider],
 ) -> CfResult<CheckResult> {
-    let comments = native_pass(root, config)?;
-    let files = comment_files(root, config)?;
-    fuse(root, config, comments, files, providers)
+    // One walk yields the comment-language files (the native pass + the provider
+    // file list); a second yields the broader `cf_scope` universe (every
+    // non-ignored file) used to validate provider findings (Idea §3, §5).
+    let scan_options = WalkOptions::from_scan_config(&config.scan);
+    let walked = walk(root, &scan_options)?;
+    let comments = native_pass(root, config, &walked)?;
+    let files: Vec<PathBuf> = walked.iter().map(|file| file.path.clone()).collect();
+    let universe = walk_universe(root, &scan_options)?;
+    fuse(root, config, comments, files, universe, providers)
 }
 
-/// The native pass: walk → extract → coalesce → map → tag markers.
-fn native_pass(root: &Path, config: &ResolvedConfig) -> CfResult<Vec<Comment>> {
-    let walked = walk(root, &WalkOptions::from_scan_config(&config.scan))?;
+/// The native pass over the walked files: extract → coalesce → map → tag markers.
+fn native_pass(
+    root: &Path,
+    config: &ResolvedConfig,
+    walked: &[WalkedFile],
+) -> CfResult<Vec<Comment>> {
     let marker_set = MarkerSet::new(&config.markers.custom);
     let mut comments = Vec::new();
-    for file in &walked {
+    for file in walked {
         let source = std::fs::read_to_string(&file.path).map_err(|e| {
             CfError::extract(format!("reading {}", file.path.display())).caused_by(e)
         })?;
@@ -71,21 +80,16 @@ fn native_pass(root: &Path, config: &ResolvedConfig) -> CfResult<Vec<Comment>> {
     Ok(comments)
 }
 
-/// The in-scope files (the set handed to every provider).
-fn comment_files(root: &Path, config: &ResolvedConfig) -> CfResult<Vec<PathBuf>> {
-    Ok(walk(root, &WalkOptions::from_scan_config(&config.scan))?
-        .into_iter()
-        .map(|file| file.path)
-        .collect())
-}
-
 /// Fuses native + provider findings onto `comments` (Idea §4, §5). Extracted so
 /// it is unit-testable with mock providers, independent of the filesystem walk.
+/// `files` is the comment-language set handed to providers; `universe` is the
+/// `cf_scope` set (every non-ignored file) provider findings are validated against.
 fn fuse(
     root: &Path,
     config: &ResolvedConfig,
     mut comments: Vec<Comment>,
     files: Vec<PathBuf>,
+    universe: Vec<String>,
     providers: &[&dyn RuleProvider],
 ) -> CfResult<CheckResult> {
     // 1. Native findings (rot + marker triage) attach to their own comment, and
@@ -108,11 +112,13 @@ fn fuse(
         provider_findings.extend(run.findings);
     }
 
-    // CF owns the file universe (Idea §5): a project-scoped tool (e.g. gitleaks
-    // scanning `{root}`) may surface findings in files CF excluded
-    // (node_modules/.venv). Drop anything outside the in-scope walked set so a
-    // provider can never widen `cf_scope`, only veto within it.
-    let in_scope: HashSet<String> = files.iter().map(|path| repo_relative(path, root)).collect();
+    // CF owns the file universe (Idea §3, §5): `cf_scope` is *every* non-ignored
+    // file, not just the comment-language subset — so a project-scoped tool (e.g.
+    // gitleaks) keeps a secret it finds in `.env`/config (surfaced as unattached,
+    // since CF extracts no comments there), while a hit in a gitignored/excluded
+    // path (node_modules/.venv) is dropped. A provider only vetoes within
+    // `cf_scope`, never widens it.
+    let in_scope: HashSet<String> = universe.into_iter().collect();
     provider_findings.retain(|finding| in_scope.contains(&finding.file));
 
     // 3. Attach provider findings + dedup every comment's fused set.
@@ -141,7 +147,7 @@ mod tests {
     use crate::testutil::TestRepo;
     use cf_core::finding::{Category, CoordinateSystem, FindingTarget, Fix, Origin, Range};
     use cf_core::severity::Severity;
-    use cf_core::symbol::CommentId;
+    use cf_core::symbol::{BoundSymbol, CommentId};
 
     /// A mock provider returning one canned finding on the file's first comment.
     struct MockProvider {
@@ -251,6 +257,87 @@ mod tests {
             "no comment carries the out-of-scope dependency finding"
         );
         assert_eq!(result.run_states[0].1, RunState::Success);
+    }
+
+    /// A project-scoped mock (gitleaks-shaped) reporting a `secret` finding for
+    /// each named file — to prove `cf_scope` filtering keeps config-file hits
+    /// (`.env`) but drops gitignored ones.
+    struct SecretScanProvider {
+        files: Vec<String>,
+        capabilities: Capabilities,
+    }
+
+    impl SecretScanProvider {
+        fn new(files: &[&str]) -> Self {
+            Self {
+                files: files.iter().map(|f| (*f).to_owned()).collect(),
+                capabilities: Capabilities {
+                    scope: Scope::Project,
+                    supports_fix: false,
+                    supports_incremental: false,
+                    supports_sarif: true,
+                    coordinate_system: CoordinateSystem::tree_sitter(),
+                },
+            }
+        }
+    }
+
+    impl RuleProvider for SecretScanProvider {
+        fn id(&self) -> &str {
+            "secretscan"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.capabilities
+        }
+        fn run(&self, _files: &[PathBuf], _ctx: &ProviderContext<'_>) -> ProviderRun {
+            ProviderRun::ran(
+                self.files
+                    .iter()
+                    .map(|file| Finding {
+                        file: file.clone(),
+                        target: FindingTarget::Symbol(BoundSymbol::new(file.as_str())),
+                        range: Range::new(0, 12, 1, 1),
+                        origin: Origin::Other("gitleaks".to_owned()),
+                        provider_rule_id: "gitleaks:generic-api-key".to_owned(),
+                        canonical_rule_id: "generic-api-key".to_owned(),
+                        category: Category::Secret,
+                        severity: Severity::Critical,
+                        severity_native: None,
+                        message: "secret".to_owned(),
+                        fix: Fix::None,
+                        url: None,
+                        also_from: Default::default(),
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    #[test]
+    fn test_secret_scope_keeps_env_but_drops_gitignored() {
+        // `cf_scope` is the non-ignored universe, NOT just comment-language files:
+        // a secret in `.env` (config CF does not comment-analyze, Idea §3) is kept
+        // and surfaced as unattached, while a secret in a gitignored path is
+        // dropped (Idea §5 — a provider vetoes within `cf_scope`, never widens it).
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "x = 1\n"); // a source file, no comments
+        repo.write(".env", "APP_ENV=local\n"); // config dotfile — in scope
+        repo.write(".gitignore", "vendored/\n");
+        repo.write("vendored/leak.py", "VALUE = 1\n"); // gitignored — out of scope
+
+        let provider = SecretScanProvider::new(&[".env", "vendored/leak.py"]);
+        let providers: [&dyn RuleProvider; 1] = [&provider];
+        let result = check(repo.path(), &ResolvedConfig::default(), &providers).unwrap();
+
+        // The `.env` secret has no comment to attach to → unattached, but kept;
+        // the gitignored hit is dropped entirely.
+        assert_eq!(
+            result.unattached.len(),
+            1,
+            "the .env secret is retained; the gitignored one is dropped"
+        );
+        assert_eq!(result.unattached[0].file, ".env");
+        assert_eq!(result.unattached[0].category, Category::Secret);
     }
 
     #[test]

@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Secret scanning covers the whole `cf_scope` universe — config files such as `.env` are scanned even though they carry no comments, while gitignored and excluded paths stay out of scope
 - Local-first by default: zero network egress except two opt-in paths (`comment-to-issue`, CI SARIF upload)
 - Provider manifests declare a command to spawn and carry no embedded code; provider binaries are version/hash-pinned
 

@@ -13,6 +13,7 @@
 //!   comments never pollute results, and
 //! * returns files in a deterministic (sorted) order for reproducibility.
 
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -112,6 +113,53 @@ pub fn walk(root: &Path, options: &WalkOptions) -> CfResult<Vec<WalkedFile>> {
     }
 
     // Deterministic order — load-bearing for reproducible reports (Idea §11).
+    files.sort();
+    Ok(files)
+}
+
+/// Enumerates CF's file *universe* — every non-ignored file under `root`,
+/// regardless of language. This is the authoritative `cf_scope` (Idea §5) a
+/// provider's findings are validated against. Unlike [`walk`], it applies **no
+/// language filter and no generated/minified sniff**: a project-scoped tool
+/// (gitleaks) legitimately reports secrets in `.env` / config files — which CF
+/// does *not* comment-analyze (Idea §3, where `.env.*` is deliberately out of the
+/// comment grammar) but *does* hold in scope. It honors `.gitignore` and
+/// `extra_ignores` exactly as [`walk`] does, includes config dotfiles like `.env`
+/// (hidden files are **not** skipped here), and never descends into `.git`.
+/// Returned paths are repo-relative, `/`-normalized strings, matching the shape
+/// of [`Finding::file`](cf_core::finding::Finding::file).
+///
+/// # Errors
+/// Returns [`CfError::Walk`] if an `extra_ignores` glob is invalid or the override
+/// set cannot be built.
+pub fn walk_universe(root: &Path, options: &WalkOptions) -> CfResult<Vec<String>> {
+    let overrides = build_overrides(root, &options.extra_ignores)?;
+    let respect = options.respect_gitignore;
+
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .git_ignore(respect)
+        .git_global(respect)
+        .git_exclude(respect)
+        .ignore(respect)
+        .parents(respect)
+        .require_git(false)
+        // Include config dotfiles (`.env`, `.github/…`) — secrets live there — so
+        // `hidden` stays off here; but never descend into the VCS internals.
+        .hidden(false)
+        .filter_entry(|entry| entry.file_name() != OsStr::new(".git"));
+    builder.overrides(overrides);
+
+    let mut files = Vec::new();
+    for entry in builder.build() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        files.push(to_repo_relative(entry.path(), root));
+    }
     files.sort();
     Ok(files)
 }
