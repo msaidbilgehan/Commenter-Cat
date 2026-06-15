@@ -1,6 +1,6 @@
 ---
 plan_slug: 2026-06-15-build-commenter-cat-engine
-last_updated: 2026-06-15T23:58:00Z
+last_updated: 2026-06-16T00:40:00Z
 schema_version: 1
 tasks:
   "1.1":
@@ -541,6 +541,22 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
 
 ## Recent Activity
 
+- 2026-06-16T00:40:00Z — **wired the §6 provider-result cache into `cf check`**
+  (closes the dogfood gitleaks-perf open observation). The content-addressed cache
+  (`inputs.db` `provider_results`, keyed `(content_hash, provider, version)`) was
+  built + tested but had **no caller** — every check re-ran every provider, so
+  gitleaks rescanned the whole tree (~233 s) each run. Added
+  `RuleProvider::version_key()` (manifest: resolved-binary hash ⊕ manifest-source
+  hash → invalidates on tool upgrade / manifest edit; `None` disables — natives,
+  absent tools, mocks); `ops::provider_cache` (project scope keys on the `cf_scope`
+  universe tree-hash, file scope on the comment-language set; raw output cached,
+  scope filter still runs after; `SUCCESS`/`EMPTY` only; best-effort → run on any
+  failure). Excluded `.comment-finder` from the universe walk so the cache cannot
+  self-invalidate. `--no-cache` bypasses; `--stats` now reports cache hits vs runs.
+  Verified e2e (2nd check on an unchanged tree: ruff + gitleaks from cache, gitleaks
+  does not rescan; content change → re-run; `.env` secret cached + re-surfaced).
+  Gate: 338 tests (was 335), clippy `-D warnings`, fmt. Open: `--stats` full
+  per-stage timing still unwired.
 - 2026-06-15T23:58:00Z — **follow-up: `.env`/config secret scope + parallel native
   pass** (two open observations from the dogfood pass, closed). (1) **Secret scope
   (Idea §3/§5):** the provider-finding scope filter keyed off the comment-language

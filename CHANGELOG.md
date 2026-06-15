@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The native pass (walk → extract → map → markers) fans out across CPU cores via `rayon`, preserving deterministic, sorted output
+- Provider results are cached in the content-addressed `inputs.db` (keyed on input content + resolved tool version), so `cf check` never re-runs a provider on an unchanged tree — gitleaks no longer rescans every run; `--no-cache` bypasses the cache and `--stats` reports cache hits vs runs
 
 ### Security
 

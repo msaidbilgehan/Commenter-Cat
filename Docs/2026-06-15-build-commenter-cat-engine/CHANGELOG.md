@@ -27,6 +27,16 @@ entries:
       cf_scope universe (.env/config via walk_universe, Idea §3/§5), and the
       native pass runs in parallel via rayon (deterministic — identical output
       order). +1 regression test (334→335).
+  - id: wire-provider-result-cache
+    date: 2026-06-16
+    kind: enhancement
+    summary: >-
+      Wired the §6 content-addressed provider-result cache into cf check (it
+      existed but had no caller): a provider never re-runs on an unchanged input
+      set, so gitleaks stops rescanning the whole tree (~233s) every run. Adds
+      RuleProvider::version_key, project-scope tree-hash keying, --no-cache, and
+      --stats cache reporting. +3 tests (335→338). Closes the dogfood
+      gitleaks-perf open observation.
 ---
 
 # Changelog
@@ -151,3 +161,37 @@ Gate: **335 tests** (was 334), clippy `-D warnings` clean, fmt clean.
 gitleaks project-scoped tree-scan is slow on large trees (the §6/§7 tree-hash
 provider cache is the intended mitigation, not yet wired into `cf check`); `--stats`
 parses but is a no-op.
+
+### 2026-06-16 — Wire the provider-result cache into `cf check` (Idea §6)
+
+Closes the headline open observation from the dogfood pass — gitleaks rescanning
+the whole tree (~233 s) on every run.
+
+The content-addressed cache (`inputs.db` `provider_results`, keyed
+`(content_hash, provider, version)`) was fully built and tested but **had no
+caller**: `ops::check` always invoked every provider. Wired it in:
+
+- **`RuleProvider::version_key()`** (default `None`) — for a manifest provider, the
+  resolved tool binary's content hash folded with the manifest source hash, so a
+  tool upgrade *or* a manifest edit invalidates cached findings (§5 comparability).
+  `None` disables caching (in-process natives, absent tools, mocks).
+- **`ops::provider_cache`** wraps each provider run: a project-scoped tool keys on
+  the `cf_scope` universe tree-hash — gitleaks's *retained* findings depend only on
+  universe content (out-of-scope hits are filtered), so that key is correct and
+  sufficient — and a file-scoped tool on the comment-language file set. The raw
+  output is cached; the existing scope filter still runs after. Only `SUCCESS`/
+  `EMPTY` are cached; the cache is best-effort (any failure → run, never a wrong
+  result).
+- **Cache-dir exclusion** — CF's own `.comment-finder` is now pruned from the
+  universe walk (alongside `.git`); otherwise its mutating `inputs.db`/`index.db`
+  would perturb the tree hash and self-invalidate the cache every run.
+- **CLI** — `check()` gained `use_cache`; `--no-cache` bypasses it; `--stats` now
+  reports cache hits vs runs (was a no-op on this dimension).
+
+Verified end to end with the real providers: a second `cf check` on an unchanged
+tree serves ruff + gitleaks from cache (gitleaks does not rescan), a content change
+invalidates and re-runs all, and the `.env` secret is cached and re-surfaced.
+Gate: **338 tests** (was 335), clippy `-D warnings` clean, fmt clean.
+
+**Remaining open observation:** `--stats` still does not report full per-stage
+timing (the §6 budget shape) — only the provider-cache dimension is wired so far.
