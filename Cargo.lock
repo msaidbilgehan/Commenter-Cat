@@ -418,6 +418,7 @@ dependencies = [
  "ignore",
  "insta",
  "proptest",
+ "rayon",
  "rmcp",
  "rusqlite",
  "serde",

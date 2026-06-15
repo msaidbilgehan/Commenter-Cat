@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `comment-to-issue` backend (GitHub via `gh`), idempotent on stable comment identity
 - Layered configuration via `comment-finder.toml`, an XDG global, and `CF_*` environment overrides
 
+### Changed
+
+- The native pass (walk → extract → map → markers) fans out across CPU cores via `rayon`, preserving deterministic, sorted output
+
 ### Security
 
 - Secret scanning covers the whole `cf_scope` universe — config files such as `.env` are scanned even though they carry no comments, while gitignored and excluded paths stay out of scope

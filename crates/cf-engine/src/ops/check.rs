@@ -14,6 +14,7 @@ use cf_core::config::ResolvedConfig;
 use cf_core::error::{CfError, CfResult};
 use cf_core::finding::Finding;
 use cf_core::identity::cosmetic_fingerprint;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::extract::coalesce::coalesce;
 use crate::extract::extract_source;
@@ -57,27 +58,43 @@ pub fn check(
 }
 
 /// The native pass over the walked files: extract → coalesce → map → tag markers.
+///
+/// Per-file work is independent and CPU-bound (tree-sitter parse + the
+/// comment→code mapping), so it runs across the rayon pool. `walk` returns a
+/// deterministically sorted slice and an indexed parallel `collect` preserves that
+/// order, so the fused comment stream is byte-for-byte identical to a sequential
+/// pass (Idea §11 reproducibility).
 fn native_pass(
     root: &Path,
     config: &ResolvedConfig,
     walked: &[WalkedFile],
 ) -> CfResult<Vec<Comment>> {
     let marker_set = MarkerSet::new(&config.markers.custom);
-    let mut comments = Vec::new();
-    for file in walked {
-        let source = std::fs::read_to_string(&file.path).map_err(|e| {
-            CfError::extract(format!("reading {}", file.path.display())).caused_by(e)
-        })?;
-        let repo_path = repo_relative(&file.path, root);
-        let mut file_comments = extract_source(&source, file.language, &file.path, &repo_path)?;
-        file_comments = coalesce(&source, file_comments);
-        map_comments(&source, file.language, &file.path, &mut file_comments)?;
-        for comment in &mut file_comments {
-            marker_set.tag(comment);
-        }
-        comments.extend(file_comments);
+    let per_file = walked
+        .par_iter()
+        .map(|file| native_pass_file(root, file, &marker_set))
+        .collect::<CfResult<Vec<Vec<Comment>>>>()?;
+    Ok(per_file.into_iter().flatten().collect())
+}
+
+/// Runs one walked file through the native pass: read → extract → coalesce → map
+/// → tag markers. Pure per-file work — no shared mutable state — so it is safe to
+/// fan out across threads (each call builds its own tree-sitter parser).
+fn native_pass_file(
+    root: &Path,
+    file: &WalkedFile,
+    marker_set: &MarkerSet,
+) -> CfResult<Vec<Comment>> {
+    let source = std::fs::read_to_string(&file.path)
+        .map_err(|e| CfError::extract(format!("reading {}", file.path.display())).caused_by(e))?;
+    let repo_path = repo_relative(&file.path, root);
+    let mut file_comments = extract_source(&source, file.language, &file.path, &repo_path)?;
+    file_comments = coalesce(&source, file_comments);
+    map_comments(&source, file.language, &file.path, &mut file_comments)?;
+    for comment in &mut file_comments {
+        marker_set.tag(comment);
     }
-    Ok(comments)
+    Ok(file_comments)
 }
 
 /// Fuses native + provider findings onto `comments` (Idea §4, §5). Extracted so
