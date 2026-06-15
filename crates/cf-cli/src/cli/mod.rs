@@ -1,0 +1,320 @@
+//! The clap verb surface (Idea §4a, §10).
+//!
+//! One canonical verb set the CLI and the MCP surface (Phase 8.3) share — the
+//! six primitives (`query`, `context`, `check`, `candidates`, `apply-edit`,
+//! `remove`) organized under find / understand / rule-check / update, plus the
+//! management verbs (`baseline`, `suppressions`, `doctor`, `install-hooks`,
+//! `issues`). The CLI is the canonical surface; MCP tools map 1:1 onto it.
+//!
+//! `clap` lives only here, never in `cf-core`/the engine domain — the CLI-side
+//! [`CliFormat`] maps to the engine's `OutputFormat` so the domain stays free of
+//! the parsing framework (`ARCH_LAYER_VIOLATION`).
+
+pub(crate) mod verbs;
+
+use std::path::PathBuf;
+
+use cf_core::config::OutputFormat;
+use clap::{Parser, Subcommand, ValueEnum};
+
+pub(crate) use verbs::run;
+
+/// `cf` — the Commenter-Cat command-line interface.
+#[derive(Debug, Parser)]
+#[command(
+    name = "cf",
+    version,
+    about = "Commenter-Cat — deterministic, multi-language comment intelligence",
+    propagate_version = true
+)]
+pub(crate) struct Cli {
+    /// The verb to run.
+    #[command(subcommand)]
+    pub(crate) command: Command,
+
+    /// Emit timing + cache statistics to stderr.
+    #[arg(long, global = true)]
+    pub(crate) stats: bool,
+
+    /// Use analyzer tools found on `PATH` instead of the pinned toolchain.
+    #[arg(long, global = true)]
+    pub(crate) system_tools: bool,
+
+    /// Require the hermetic pinned toolchain; fail if it is unavailable.
+    #[arg(long, global = true)]
+    pub(crate) hermetic: bool,
+
+    /// Include suppressed findings in the output (audit view).
+    #[arg(long, global = true)]
+    pub(crate) show_suppressed: bool,
+}
+
+/// The verb set — 1:1 with the MCP tools (Idea §4a).
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+pub(crate) enum Command {
+    /// FIND: search comments by text (FTS + vector), ranked and bounded.
+    Query {
+        /// The search text.
+        query: String,
+        /// Maximum results (token-budget bound).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Drill cursor (offset) returned by a prior page.
+        #[arg(long)]
+        cursor: Option<usize>,
+    },
+
+    /// UNDERSTAND: fetch one comment, with its bound code on request.
+    Context {
+        /// The comment id (from a prior `query`/`check`).
+        comment_id: String,
+        /// Include the bound code span (opt-in; never bundled by default).
+        #[arg(long)]
+        with_code: bool,
+    },
+
+    /// RULE-CHECK: run the analysis over the tree and render the findings.
+    Check {
+        /// Paths to check (default: the whole repository).
+        paths: Vec<PathBuf>,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = CliFormat::Terminal)]
+        format: CliFormat,
+        /// Fail on *any* finding, regardless of `fail_on` (CI gate).
+        #[arg(long)]
+        strict: bool,
+    },
+
+    /// FIND: the native worklist — rot candidates + ranked markers.
+    Candidates {
+        /// Maximum results (token-budget bound).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+
+    /// UPDATE: apply a parse-invariant comment edit, then re-check inline.
+    ApplyEdit {
+        /// The comment id to edit.
+        comment_id: String,
+        /// The new comment text.
+        new_text: String,
+        /// Permit editing a behavior-bearing comment (directive/shebang).
+        #[arg(long)]
+        allow_significant: bool,
+    },
+
+    /// UPDATE: remove a comment, then re-check inline.
+    Remove {
+        /// The comment id to remove.
+        comment_id: String,
+        /// Permit removing a behavior-bearing comment.
+        #[arg(long)]
+        allow_significant: bool,
+    },
+
+    /// Manage the committed baseline (`comment-finder.baseline.toml`).
+    Baseline {
+        #[command(subcommand)]
+        action: BaselineAction,
+    },
+
+    /// Manage suppressions (export to native tool directives).
+    Suppressions {
+        #[command(subcommand)]
+        action: SuppressionsAction,
+    },
+
+    /// Validate provider versions and config comparability.
+    Doctor,
+
+    /// Serve the MCP protocol over stdio (the agent-facing product, Idea §4a).
+    Mcp,
+
+    /// Install the git hooks (pre-commit / pre-push).
+    InstallHooks,
+
+    /// Sync flagged comments to the issue tracker.
+    Issues {
+        #[command(subcommand)]
+        action: IssuesAction,
+    },
+}
+
+/// `cf baseline …` actions.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+#[command(rename_all = "kebab-case")]
+pub(crate) enum BaselineAction {
+    /// Snapshot current findings into the baseline.
+    Accept,
+    /// Drop baseline entries whose findings no longer occur.
+    Prune,
+}
+
+/// `cf suppressions …` actions.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+#[command(rename_all = "kebab-case")]
+pub(crate) enum SuppressionsAction {
+    /// Materialize the suppression set into native tool directives.
+    Export,
+}
+
+/// `cf issues …` actions.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+#[command(rename_all = "kebab-case")]
+pub(crate) enum IssuesAction {
+    /// Sync flagged comments to the issue tracker.
+    Sync,
+}
+
+/// The CLI's output-format flag, mapped to the engine's `OutputFormat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub(crate) enum CliFormat {
+    /// Grouped human view (default).
+    Terminal,
+    /// Canonical schema-tagged JSONL stream.
+    Jsonl,
+    /// SARIF 2.1.0 (GitHub code-scanning).
+    Sarif,
+    /// Markdown report.
+    Markdown,
+    /// CSV (RFC 4180).
+    Csv,
+}
+
+impl From<CliFormat> for OutputFormat {
+    fn from(format: CliFormat) -> Self {
+        match format {
+            CliFormat::Terminal => OutputFormat::Terminal,
+            CliFormat::Jsonl => OutputFormat::Jsonl,
+            CliFormat::Sarif => OutputFormat::Sarif,
+            CliFormat::Markdown => OutputFormat::Markdown,
+            CliFormat::Csv => OutputFormat::Csv,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parses argv the way `main` does, surfacing clap's error on failure.
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args parse")
+    }
+
+    #[test]
+    fn test_all_verbs_parse_to_their_command() {
+        assert!(matches!(
+            parse(&["cf", "query", "stale"]).command,
+            Command::Query { .. }
+        ));
+        assert!(matches!(
+            parse(&["cf", "context", "c1"]).command,
+            Command::Context { .. }
+        ));
+        assert!(matches!(
+            parse(&["cf", "check"]).command,
+            Command::Check { .. }
+        ));
+        assert!(matches!(
+            parse(&["cf", "candidates"]).command,
+            Command::Candidates { .. }
+        ));
+        assert!(matches!(
+            parse(&["cf", "apply-edit", "c1", "# new"]).command,
+            Command::ApplyEdit { .. }
+        ));
+        assert!(matches!(
+            parse(&["cf", "remove", "c1"]).command,
+            Command::Remove { .. }
+        ));
+        assert!(matches!(parse(&["cf", "doctor"]).command, Command::Doctor));
+        assert!(matches!(parse(&["cf", "mcp"]).command, Command::Mcp));
+        assert!(matches!(
+            parse(&["cf", "install-hooks"]).command,
+            Command::InstallHooks
+        ));
+    }
+
+    #[test]
+    fn test_subcommands_parse() {
+        let Command::Baseline { action } = parse(&["cf", "baseline", "accept"]).command else {
+            panic!("expected baseline");
+        };
+        assert_eq!(action, BaselineAction::Accept);
+
+        let Command::Suppressions { action } = parse(&["cf", "suppressions", "export"]).command
+        else {
+            panic!("expected suppressions");
+        };
+        assert_eq!(action, SuppressionsAction::Export);
+
+        let Command::Issues { action } = parse(&["cf", "issues", "sync"]).command else {
+            panic!("expected issues");
+        };
+        assert_eq!(action, IssuesAction::Sync);
+    }
+
+    #[test]
+    fn test_check_flags_and_format() {
+        let cli = parse(&["cf", "check", "src", "--format", "jsonl", "--strict"]);
+        let Command::Check {
+            paths,
+            format,
+            strict,
+        } = cli.command
+        else {
+            panic!("expected check");
+        };
+        assert_eq!(paths, vec![PathBuf::from("src")]);
+        assert_eq!(format, CliFormat::Jsonl);
+        assert!(strict);
+        assert_eq!(OutputFormat::from(format), OutputFormat::Jsonl);
+    }
+
+    #[test]
+    fn test_global_flags_apply_across_verbs() {
+        let cli = parse(&["cf", "check", "--show-suppressed", "--hermetic"]);
+        assert!(cli.show_suppressed);
+        assert!(cli.hermetic);
+    }
+
+    #[test]
+    fn test_apply_edit_significant_flag() {
+        let Command::ApplyEdit {
+            comment_id,
+            new_text,
+            allow_significant,
+        } = parse(&["cf", "apply-edit", "c9", "# updated", "--allow-significant"]).command
+        else {
+            panic!("expected apply-edit");
+        };
+        assert_eq!(comment_id, "c9");
+        assert_eq!(new_text, "# updated");
+        assert!(allow_significant);
+    }
+
+    #[test]
+    fn test_help_lists_every_verb() {
+        let mut cmd = <Cli as clap::CommandFactory>::command();
+        let help = cmd.render_long_help().to_string();
+        for verb in [
+            "query",
+            "context",
+            "check",
+            "candidates",
+            "apply-edit",
+            "remove",
+            "baseline",
+            "suppressions",
+            "doctor",
+            "mcp",
+            "install-hooks",
+            "issues",
+        ] {
+            assert!(help.contains(verb), "`cf --help` lists `{verb}`");
+        }
+    }
+}
