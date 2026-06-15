@@ -10,6 +10,7 @@
 pub mod backend;
 pub mod github;
 pub mod ledger_file;
+pub mod reconcile;
 
 use std::collections::BTreeMap;
 
@@ -20,6 +21,7 @@ use crate::ops::apply::{self, ApplyResult};
 
 pub use backend::{IssueBackend, IssueRef, IssueRequest};
 pub use ledger_file::{LEDGER_FILENAME, LEDGER_VERSION};
+pub use reconcile::{reconcile_resolved, ReconcileReport};
 
 /// The stable Tier-4 identity token an issue is filed against (Idea §9). Built
 /// from the parts that survive a prose rewording — the bound symbol, the comment
@@ -58,6 +60,12 @@ impl IssueLedger {
     /// Records an issue against a token.
     pub fn record(&mut self, token: String, issue: IssueRef) {
         self.entries.insert(token, issue);
+    }
+
+    /// Drops a token's entry — e.g. after its marker comment is resolved and
+    /// removed, retiring the comment-to-issue link. Returns the issue it held.
+    pub fn remove(&mut self, token: &str) -> Option<IssueRef> {
+        self.entries.remove(token)
     }
 
     /// The number of distinct identities filed.

@@ -616,10 +616,12 @@ fn run_suppressions(action: &SuppressionsAction, use_cache: bool) -> CfResult<i3
     }
 }
 
-/// `cf issues sync` — file flagged (marker) comments to the issue tracker (Idea
-/// §9), idempotently via the committed ledger. The default is a **dry-run plan**;
-/// `--apply` actually files (network + `gh`, outward-facing). Closed-issue
-/// reconciliation (removing a resolved marker comment) is the documented next step.
+/// `cf issues sync` — bidirectional comment-to-issue sync (Idea §9), idempotent
+/// via the committed ledger. Forward: file flagged (marker) comments not yet
+/// tracked. Reverse: a resolved (closed) issue → remove its marker comment through
+/// the parse-invariant applier. The default is a **dry-run plan** (forward is
+/// offline; the resolution preview is a read-only tracker query); `--apply`
+/// performs both (network + `gh`, outward-facing).
 fn run_issues(action: &IssuesAction, use_cache: bool) -> CfResult<i32> {
     match action {
         IssuesAction::Sync { apply } => run_issues_sync(*apply, use_cache),
@@ -647,16 +649,18 @@ fn run_issues_sync(apply: bool, use_cache: bool) -> CfResult<i32> {
     };
 
     let backend = issues::github::GhCliBackend::new();
-    let mut new_tokens: BTreeSet<String> = BTreeSet::new();
-    let mut filed = 0usize;
-    let mut already = 0usize;
-    let mut plan = String::new();
 
+    // Forward: file marker comments not yet in the ledger. Already-tracked markers
+    // become the reconciliation candidates (their issues may now be closed).
+    let mut new_tokens: BTreeSet<String> = BTreeSet::new();
+    let mut tracked: Vec<(&Comment, String)> = Vec::new();
+    let mut filed = 0usize;
+    let mut plan = String::new();
     for comment in &result.comments {
         for marker in &comment.markers {
             let token = issues::identity_token(comment, marker);
             if ledger.get(&token).is_some() {
-                already += 1;
+                tracked.push((comment, token));
                 continue;
             }
             // A reworded comment shares its Tier-4 token — file each identity once.
@@ -676,25 +680,48 @@ fn run_issues_sync(apply: bool, use_cache: bool) -> CfResult<i32> {
             }
         }
     }
+    let already = tracked.len();
 
+    // Reverse: resolved (closed) issues → remove their marker comments. Read-only
+    // preview in a dry run; actual removal + ledger cleanup under `--apply`.
+    let reconcile = issues::reconcile_resolved(&root, &tracked, &backend, &ledger, !apply)?;
+    let ledger_changed = filed > 0 || !reconcile.resolved_tokens.is_empty();
     if apply {
-        issues::ledger_file::save(&ledger, &ledger_path)?;
+        for token in &reconcile.resolved_tokens {
+            ledger.remove(token);
+        }
+        if ledger_changed {
+            issues::ledger_file::save(&ledger, &ledger_path)?;
+        }
     }
+    let verb = if apply { "resolved" } else { "would resolve" };
+    for entry in &reconcile.removed {
+        plan.push_str(&format!("  {verb}: {entry}\n"));
+    }
+    let resolved = reconcile.removed.len();
 
     let mut out = if apply {
         format!(
-            "Filed {filed} new issue(s); {already} already tracked. Ledger: {}\n",
+            "Filed {filed} new issue(s); {already} already tracked; resolved {resolved} \
+             comment(s). Ledger: {}\n",
             ledger_path.display()
         )
     } else {
         format!(
-            "Dry run: {} comment(s) would be filed; {already} already tracked. \
-             Re-run `cf issues sync --apply` to file (network + gh).\n",
+            "Dry run: {} would be filed; {already} already tracked; {resolved} would be \
+             resolved (comment removed). Re-run `cf issues sync --apply` to file + reconcile \
+             (network + gh).\n",
             new_tokens.len()
         )
     };
     out.push_str(&plan);
     print(&out);
+
+    // A degraded reconciliation (tracker unreachable, unsafe removal) is visible,
+    // not silent (Idea §5).
+    for skip in &reconcile.skipped {
+        eprintln!("cf: note: issues sync — {skip}");
+    }
     Ok(render::EXIT_OK)
 }
 
