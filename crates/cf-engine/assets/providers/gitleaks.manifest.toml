@@ -1,0 +1,19 @@
+# Built-in gitleaks provider (Idea §5 dogfooding) — secrets.
+# Every gitleaks hit is a `secret` (always critical, by the category anchor), so
+# `default_category` covers all rule ids without an enumerated map.
+manifest_version = 1
+command = ["gitleaks", "detect", "--no-git", "--report-format", "json", "--report-path", "/dev/stdout", "{files}"]
+format = "json"
+scope = "project"
+default_category = "secret"
+
+[[findings]]
+iterate = "$[*]"
+native_rule_id = "$.RuleID"
+message = "$.Description"
+file = "$.File"
+line = "$.StartLine"
+column = "$.StartColumn"
+
+[capabilities]
+coordinate_system = "1-based-utf8"

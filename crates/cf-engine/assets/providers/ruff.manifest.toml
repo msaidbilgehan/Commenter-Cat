@@ -1,0 +1,47 @@
+# Built-in ruff provider (Idea §5 dogfooding) — Python.
+# Curated to the comment domain: doc presence (D1xx), doc style (D2xx–D4xx),
+# doc drift (D417), commented-out code (ERA), and TODO format (TD). `ruff check`
+# emits all enabled rules; `keep_only_mapped` drops everything outside this set.
+manifest_version = 1
+command = ["ruff", "check", "--output-format", "json", "{files}"]
+format = "json"
+scope = "file"
+keep_only_mapped = true
+
+[[findings]]
+iterate = "$[*]"
+native_rule_id = "$.code"
+message = "$.message"
+file = "$.filename"
+line = "$.location.row"
+column = "$.location.column"
+
+[category_map]
+# Doc presence (D1xx)
+D100 = "doc_missing"
+D101 = "doc_missing"
+D102 = "doc_missing"
+D103 = "doc_missing"
+D104 = "doc_missing"
+D105 = "doc_missing"
+D106 = "doc_missing"
+D107 = "doc_missing"
+# Doc-signature drift
+D417 = "doc_drift"
+# Docstring style (curated D2xx–D4xx subset)
+D200 = "doc_style"
+D205 = "doc_style"
+D210 = "doc_style"
+D212 = "doc_style"
+D400 = "doc_style"
+D415 = "doc_style"
+# Commented-out code
+ERA001 = "commented_code"
+# TODO format
+TD002 = "todo_format"
+TD003 = "todo_format"
+
+[capabilities]
+supports_fix = true
+supports_incremental = true
+coordinate_system = "1-based-utf8"

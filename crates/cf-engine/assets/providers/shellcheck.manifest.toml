@@ -1,0 +1,32 @@
+# Built-in shellcheck provider (Idea §5 dogfooding) — Shell.
+# Curated to the comment domain: shebang and source/directive grammar. The
+# numeric `code` is stringified by the extractor; `keep_only_mapped` drops
+# out-of-domain shell-lint findings.
+manifest_version = 1
+command = ["shellcheck", "--format=json", "{files}"]
+format = "json"
+scope = "file"
+keep_only_mapped = true
+
+[[findings]]
+iterate = "$[*]"
+native_rule_id = "$.code"
+severity = "$.level"
+message = "$.message"
+file = "$.file"
+line = "$.line"
+column = "$.column"
+
+[severity_map]
+error = "error"
+warning = "warning"
+info = "info"
+style = "info"
+
+[category_map]
+"2148" = "shebang"     # missing/!first shebang
+"1090" = "directive"   # can't follow non-constant source; use a directive
+"1091" = "directive"   # not following sourced file; use a directive
+
+[capabilities]
+coordinate_system = "1-based-utf8"
