@@ -1,0 +1,5 @@
+# Formatting is stable-channel only — no nightly-gated options, so `cargo fmt`
+# works for every contributor. Defaults (max_width = 100) are intentional.
+edition = "2021"
+newline_style = "Unix"
+use_field_init_shorthand = true

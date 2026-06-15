@@ -1,0 +1,8 @@
+# MSRV gate — clippy will not suggest lints requiring a newer compiler.
+msrv = "1.96"
+
+# Tests and fixtures may use `.unwrap()` / `.expect()` for brevity; the
+# workspace lint table forbids them only in production paths (general.md ERR_*).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

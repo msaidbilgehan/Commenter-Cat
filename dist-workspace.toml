@@ -1,0 +1,36 @@
+# cargo-dist (`dist`) configuration — the source of truth for releases (Idea §10).
+#
+# `dist init` / `dist generate` regenerate `.github/workflows/release.yml` from
+# this file. The `cf` binary links sqlite-vec **statically** (no shipped native
+# artifact — this is how risk R1 was retired for vectors), and the ONNX model is
+# fetched on first use, so each target's artifact is the single self-contained
+# `cf` binary plus its installer — there is no per-(os,arch) native side-artifact
+# to drift.
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# The dist version this config targets (pin for reproducible release CI).
+cargo-dist-version = "0.28.0"
+# Generate CI for GitHub Actions.
+ci = "github"
+# How users install prebuilt binaries (`cargo binstall` reads the shell/ps1).
+installers = ["shell", "powershell"]
+# The five tier-1 targets (Idea §10). musl gives a static Linux binary; the
+# gnu/musl + arm/x86 + windows spread is the supported matrix.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+# Build in the GitHub release, attach checksums.
+checksum = "sha256"
+# Don't auto-update; the binary is pinned per release (Idea §11 surface stability).
+install-updater = false
+# A missing build for any target fails the whole release — never ship a partial
+# matrix (Idea §10: never ship degraded).
+allow-dirty = []

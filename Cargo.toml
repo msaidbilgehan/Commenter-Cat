@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = ["crates/cf-core", "crates/cf-engine", "crates/cf-cli"]
+
+# Shared package metadata. Every member crate inherits these via
+# `field.workspace = true` so the version/edition/MSRV stay in lockstep
+# (Idea §11: the `cf` binary is SemVer 1.0+, one coherent release).
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.96"
+license = "BSD-3-Clause"
+authors = ["Muhammed Said"]
+repository = "https://github.com/msaidbilgehan/Commenter-Cat"
+homepage = "https://github.com/msaidbilgehan/Commenter-Cat"
+description = "Commenter-Cat (cf): a deterministic, multi-language comment-intelligence engine."
+keywords = ["comments", "linter", "tree-sitter", "mcp", "documentation"]
+categories = ["development-tools", "command-line-utilities"]
+
+# Single source of truth for dependency versions (Idea §10 names the stack).
+# Per task 1.1: only the foundation deps are wired now — provider/MCP/storage
+# crates are added by their own phases, not front-loaded here.
+[workspace.dependencies]
+# --- internal crates ---
+cf-core = { path = "crates/cf-core", version = "1.0.0" }
+cf-engine = { path = "crates/cf-engine", version = "1.0.0" }
+# --- foundation third-party ---
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+toml = "0.8"
+# --- interface (Phase 8) ---
+clap = { version = "4", features = ["derive"] }
+rmcp = { version = "1", features = ["transport-io", "schemars"] }
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "time"] }
+# --- dev/test only ---
+tempfile = "3"
+proptest = "1"
+insta = "1"
+criterion = "0.5"
+
+# Lints applied workspace-wide. Members opt in with `[lints] workspace = true`.
+# These encode the general.md catalog at the compiler/clippy level so the rules
+# are enforced mechanically, not by review alone.
+[workspace.lints.rust]
+# `deny` (not `forbid`) so the single unavoidable FFI seam — registering the
+# statically-linked sqlite-vec auto-extension (Idea §6) — can opt in with a
+# justified, local `#[allow(unsafe_code)]`. All other code stays safe.
+unsafe_code = "deny"
+missing_docs = "warn"              # public API is documented (Docstrings rule)
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Quality gates (denied in CI via `-D warnings`).
+all = { level = "warn", priority = -1 }
+# general.md ERR_*: forbid silent-panic ergonomics in non-test code. The
+# `allow-*-in-tests` keys in clippy.toml exempt test code so fixtures stay terse.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+# Correctness / footgun guards.
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"              # OBS_PRINT_INSTEAD_OF_LOG (cf-cli overrides locally)
+print_stderr = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
