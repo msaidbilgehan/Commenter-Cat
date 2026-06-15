@@ -82,7 +82,7 @@ fn check(args: &Value) -> CfResult<Value> {
         .iter()
         .map(|provider| provider as &dyn RuleProvider)
         .collect();
-    let result = ops::check::check(&root, &config, &refs)?;
+    let result = ops::check::check(&root, &config, &refs, true)?;
     // Persist so the index-backed tools (query/context/apply_edit/remove) resolve.
     index::persist(&root, &result.comments, &index::default_embedder())?;
 
@@ -103,7 +103,7 @@ fn candidates(args: &Value) -> CfResult<Value> {
         .map_or(20, |n| n as usize);
     let config = config::discover(&root)?;
     let no_providers: [&dyn RuleProvider; 0] = [];
-    let result = ops::check::check(&root, &config, &no_providers)?;
+    let result = ops::check::check(&root, &config, &no_providers, true)?;
 
     let mut items: Vec<(ranking::Priority, Value)> = result
         .comments

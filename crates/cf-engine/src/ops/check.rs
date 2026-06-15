@@ -20,7 +20,7 @@ use crate::extract::coalesce::coalesce;
 use crate::extract::extract_source;
 use crate::map::map_comments;
 use crate::markers::MarkerSet;
-use crate::ops::{normalize, triage};
+use crate::ops::{normalize, provider_cache, triage};
 use crate::provider::{ProviderContext, RuleProvider, RunState};
 use crate::walk::{walk, walk_universe, WalkOptions, WalkedFile};
 
@@ -35,9 +35,16 @@ pub struct CheckResult {
     /// Provider findings that attached to no comment (symbol-targeted, e.g.
     /// `doc_missing` on an undocumented symbol).
     pub unattached: Vec<Finding>,
+    /// Provider-cache outcome (hits vs runs) for `--stats` (Idea §6).
+    pub cache_stats: provider_cache::CacheStats,
 }
 
 /// Runs `cf check` over `root`: the native pass, every provider, then fusion.
+///
+/// When `use_cache` is set, provider results are served from (and written to) the
+/// content-addressed `inputs.db` cache, so a provider never re-runs on unchanged
+/// input (Idea §6, the load-bearing performance lever); pass `false` to force a
+/// full re-run.
 ///
 /// # Errors
 /// Returns [`CfError`] if the walk, a file read, or a grammar pass fails.
@@ -45,6 +52,7 @@ pub fn check(
     root: &Path,
     config: &ResolvedConfig,
     providers: &[&dyn RuleProvider],
+    use_cache: bool,
 ) -> CfResult<CheckResult> {
     // One walk yields the comment-language files (the native pass + the provider
     // file list); a second yields the broader `cf_scope` universe (every
@@ -54,7 +62,9 @@ pub fn check(
     let comments = native_pass(root, config, &walked)?;
     let files: Vec<PathBuf> = walked.iter().map(|file| file.path.clone()).collect();
     let universe = walk_universe(root, &scan_options)?;
-    fuse(root, config, comments, files, universe, providers)
+    fuse(
+        root, config, comments, files, universe, providers, use_cache,
+    )
 }
 
 /// The native pass over the walked files: extract → coalesce → map → tag markers.
@@ -108,6 +118,7 @@ fn fuse(
     files: Vec<PathBuf>,
     universe: Vec<String>,
     providers: &[&dyn RuleProvider],
+    use_cache: bool,
 ) -> CfResult<CheckResult> {
     // 1. Native findings (rot + marker triage) attach to their own comment, and
     //    the cosmetic fingerprint (the §4 identity field) is filled in so the
@@ -119,12 +130,21 @@ fn fuse(
         comment.findings.extend(native);
     }
 
-    // 2. Run every provider; record its run state (Idea §5: state, not exit code).
+    // 2. Run every provider through the result cache (Idea §6: a provider never
+    //    re-runs on unchanged input — the load-bearing performance lever), and
+    //    record each run state (Idea §5: state, not exit code).
     let context = ProviderContext::new(root, &config.severity.overrides);
+    let cache = provider_cache::ProviderCache::build(root, &files, &universe, providers, use_cache);
     let mut provider_findings = Vec::new();
     let mut run_states = Vec::new();
+    let mut cache_stats = provider_cache::CacheStats::default();
     for provider in providers {
-        let run = provider.run(&files, &context);
+        let (run, was_hit) = cache.run(*provider, &files, &context);
+        if was_hit {
+            cache_stats.hits += 1;
+        } else {
+            cache_stats.runs += 1;
+        }
         run_states.push((provider.id().to_owned(), run.state));
         provider_findings.extend(run.findings);
     }
@@ -146,6 +166,7 @@ fn fuse(
         comments,
         run_states,
         unattached,
+        cache_stats,
     })
 }
 
@@ -159,6 +180,8 @@ fn repo_relative(path: &Path, root: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::provider::{Capabilities, ProviderRun, Scope};
     use crate::testutil::TestRepo;
@@ -260,7 +283,7 @@ mod tests {
             },
         };
         let providers: [&dyn RuleProvider; 1] = [&oos];
-        let result = check(repo.path(), &ResolvedConfig::default(), &providers).unwrap();
+        let result = check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
 
         assert!(
             result.unattached.is_empty(),
@@ -344,7 +367,7 @@ mod tests {
 
         let provider = SecretScanProvider::new(&[".env", "vendored/leak.py"]);
         let providers: [&dyn RuleProvider; 1] = [&provider];
-        let result = check(repo.path(), &ResolvedConfig::default(), &providers).unwrap();
+        let result = check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
 
         // The `.env` secret has no comment to attach to → unattached, but kept;
         // the gitignored hit is dropped entirely.
@@ -366,7 +389,7 @@ mod tests {
         let mock = MockProvider::new();
         let providers: [&dyn RuleProvider; 1] = [&mock];
 
-        let result = check(repo.path(), &config, &providers).unwrap();
+        let result = check(repo.path(), &config, &providers, false).unwrap();
 
         // One comment, carrying BOTH the native marker finding and the provider one.
         assert_eq!(result.comments.len(), 1);
@@ -388,5 +411,123 @@ mod tests {
             result.run_states,
             vec![("mock".to_owned(), RunState::Success)]
         );
+    }
+
+    /// A provider that counts its invocations and carries a fixed `version_key`,
+    /// so a test can prove the result cache skipped a re-run (Idea §6).
+    struct CountingProvider {
+        capabilities: Capabilities,
+        runs: AtomicUsize,
+    }
+
+    impl CountingProvider {
+        fn project() -> Self {
+            Self {
+                capabilities: Capabilities {
+                    scope: Scope::Project,
+                    supports_fix: false,
+                    supports_incremental: false,
+                    supports_sarif: true,
+                    coordinate_system: CoordinateSystem::tree_sitter(),
+                },
+                runs: AtomicUsize::new(0),
+            }
+        }
+
+        fn run_count(&self) -> usize {
+            self.runs.load(Ordering::SeqCst)
+        }
+    }
+
+    impl RuleProvider for CountingProvider {
+        fn id(&self) -> &str {
+            "counting"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.capabilities
+        }
+        fn version_key(&self) -> Option<String> {
+            Some("v-test".to_owned())
+        }
+        fn run(&self, _files: &[PathBuf], _ctx: &ProviderContext<'_>) -> ProviderRun {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            ProviderRun::ran(vec![Finding {
+                file: "pkg/m.py".to_owned(),
+                target: FindingTarget::Symbol(BoundSymbol::new("pkg/m.py")),
+                range: Range::new(0, 4, 1, 1),
+                origin: Origin::Other("gitleaks".to_owned()),
+                provider_rule_id: "gitleaks:generic-api-key".to_owned(),
+                canonical_rule_id: "generic-api-key".to_owned(),
+                category: Category::Secret,
+                severity: Severity::Critical,
+                severity_native: None,
+                message: "secret".to_owned(),
+                fix: Fix::None,
+                url: None,
+                also_from: Default::default(),
+            }])
+        }
+    }
+
+    #[test]
+    fn test_provider_cache_skips_rerun_on_unchanged_input() {
+        // Two checks over an unchanged tree: the project-scoped provider runs once,
+        // then is served from the content-addressed cache (Idea §6).
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "# c\nx = 1\n");
+        let provider = CountingProvider::project();
+        let providers: [&dyn RuleProvider; 1] = [&provider];
+
+        let first = check(repo.path(), &ResolvedConfig::default(), &providers, true).unwrap();
+        let second = check(repo.path(), &ResolvedConfig::default(), &providers, true).unwrap();
+
+        assert_eq!(provider.run_count(), 1, "the second check is a cache hit");
+        assert_eq!(
+            first.cache_stats.runs, 1,
+            "the first check ran the provider"
+        );
+        assert_eq!(second.cache_stats.hits, 1, "the second check hit the cache");
+        // The cached findings come back: the secret is present on both runs.
+        let has_secret = |result: &CheckResult| {
+            result.comments.iter().any(|comment| {
+                comment
+                    .findings
+                    .iter()
+                    .any(|f| f.category == Category::Secret)
+            })
+        };
+        assert!(has_secret(&first) && has_secret(&second));
+    }
+
+    #[test]
+    fn test_provider_cache_invalidates_on_content_change() {
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "# c\nx = 1\n");
+        let provider = CountingProvider::project();
+        let providers: [&dyn RuleProvider; 1] = [&provider];
+
+        check(repo.path(), &ResolvedConfig::default(), &providers, true).unwrap();
+        // A change to a cf_scope file shifts the tree hash → cache miss → re-run.
+        repo.write("pkg/m.py", "# changed\nx = 2\n");
+        check(repo.path(), &ResolvedConfig::default(), &providers, true).unwrap();
+
+        assert_eq!(
+            provider.run_count(),
+            2,
+            "a content change re-runs the provider"
+        );
+    }
+
+    #[test]
+    fn test_no_cache_always_reruns() {
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "# c\nx = 1\n");
+        let provider = CountingProvider::project();
+        let providers: [&dyn RuleProvider; 1] = [&provider];
+
+        check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
+        check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
+
+        assert_eq!(provider.run_count(), 2, "use_cache=false never caches");
     }
 }

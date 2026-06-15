@@ -26,6 +26,8 @@ use cf_core::severity::Severity;
 use cf_core::symbol::BoundSymbol;
 use cf_core::version::manifest_version_is_supported;
 
+use crate::hash::sha256_hex;
+
 use super::contract::{Capabilities, ProviderContext, ProviderRun, RuleProvider, Scope};
 use capabilities::ManifestCapabilities;
 use jsonpath::FindingSpec;
@@ -114,6 +116,9 @@ pub struct ManifestProvider {
     id: String,
     manifest: Manifest,
     capabilities: Capabilities,
+    /// `sha256` of the manifest source — the config half of the cache version key
+    /// (Idea §6), so a manifest edit invalidates this provider's cached results.
+    config_hash: String,
 }
 
 impl ManifestProvider {
@@ -133,10 +138,12 @@ impl ManifestProvider {
             ));
         }
         let capabilities = manifest.capabilities.to_capabilities(manifest.scope);
+        let config_hash = sha256_hex(toml_str.as_bytes());
         Ok(Self {
             id,
             manifest,
             capabilities,
+            config_hash,
         })
     }
 
@@ -248,6 +255,37 @@ impl ManifestProvider {
     }
 }
 
+/// Resolves a command name to the executable that would run, for cache keying: an
+/// absolute or path-bearing name is taken as-is; a bare name is searched on `PATH`
+/// (honoring `PATHEXT` on Windows). `None` if unresolved — the caller then skips
+/// caching this provider (safe degradation), never a hard error.
+fn resolve_executable(name: &str) -> Option<PathBuf> {
+    let direct = Path::new(name);
+    if direct.is_absolute() || name.contains('/') || name.contains('\\') {
+        return direct.is_file().then(|| direct.to_path_buf());
+    }
+    let path_var = std::env::var_os("PATH")?;
+    let extensions: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_owned())
+            .split(';')
+            .filter(|extension| !extension.is_empty())
+            .map(str::to_owned)
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+    for dir in std::env::split_paths(&path_var) {
+        for extension in &extensions {
+            let candidate = dir.join(format!("{name}{extension}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 impl RuleProvider for ManifestProvider {
     fn id(&self) -> &str {
         &self.id
@@ -283,6 +321,16 @@ impl RuleProvider for ManifestProvider {
             Ok(findings) => ProviderRun::ran(findings),
             Err(_) => ProviderRun::partial(),
         }
+    }
+
+    fn version_key(&self) -> Option<String> {
+        // Bind the resolved tool binary's content to the manifest config: either
+        // changing invalidates cached findings (Idea §5 comparability, §6 key).
+        let binary = self.manifest.command.first()?;
+        let resolved = resolve_executable(binary)?;
+        let bytes = std::fs::read(&resolved).ok()?;
+        let combined = format!("{}\0{}", sha256_hex(&bytes), self.config_hash);
+        Some(sha256_hex(combined.as_bytes()))
     }
 }
 

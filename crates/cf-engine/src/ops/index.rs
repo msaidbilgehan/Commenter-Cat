@@ -183,7 +183,13 @@ mod tests {
             "pkg/cache.py",
             "# TODO retry the database connection\nx = 1\n",
         );
-        let result = check(repo.path(), &ResolvedConfig::default(), &NO_PROVIDERS).unwrap();
+        let result = check(
+            repo.path(),
+            &ResolvedConfig::default(),
+            &NO_PROVIDERS,
+            false,
+        )
+        .unwrap();
         persist(repo.path(), &result.comments, &default_embedder()).unwrap();
         repo
     }

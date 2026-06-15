@@ -51,7 +51,7 @@ fn check_produces_unified_findings_across_a_real_tree() {
         "# TODO wire this up\ndef parse(data):\n    \"\"\"Parse it.\"\"\"\n    return data\n",
     )]);
 
-    let result = check(dir.path(), &ResolvedConfig::default(), &NO_PROVIDERS).unwrap();
+    let result = check(dir.path(), &ResolvedConfig::default(), &NO_PROVIDERS, false).unwrap();
 
     // The TODO marker surfaces as a native finding bound to its comment.
     let findings: Vec<&Finding> = result.comments.iter().flat_map(|c| &c.findings).collect();
@@ -66,7 +66,7 @@ fn check_produces_unified_findings_across_a_real_tree() {
 #[test]
 fn directive_suppresses_a_matching_finding() {
     let dir = repo_with(&[("a.py", "# TODO debt here\nx = 1\n")]);
-    let result = check(dir.path(), &ResolvedConfig::default(), &NO_PROVIDERS).unwrap();
+    let result = check(dir.path(), &ResolvedConfig::default(), &NO_PROVIDERS, false).unwrap();
     let findings: Vec<Finding> = result
         .comments
         .iter()
@@ -93,7 +93,7 @@ fn directive_suppresses_a_matching_finding() {
 #[test]
 fn baseline_excludes_known_findings_from_the_diff() {
     let dir = repo_with(&[("a.py", "# TODO old debt\nx = 1\n")]);
-    let mut result = check(dir.path(), &ResolvedConfig::default(), &NO_PROVIDERS).unwrap();
+    let mut result = check(dir.path(), &ResolvedConfig::default(), &NO_PROVIDERS, false).unwrap();
 
     // Identity (the cosmetic fingerprint) is computed alongside the diff.
     for comment in &mut result.comments {

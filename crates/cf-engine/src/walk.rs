@@ -25,6 +25,8 @@ use cf_core::config::ScanConfig;
 use cf_core::error::{CfError, CfResult};
 use cf_core::lang::Language;
 
+use crate::storage::location::CACHE_DIR_NAME;
+
 /// Bytes of a file header sniffed for the generated-file heuristic.
 const GENERATED_SNIFF_BYTES: u64 = 8 * 1024;
 
@@ -147,7 +149,13 @@ pub fn walk_universe(root: &Path, options: &WalkOptions) -> CfResult<Vec<String>
         // Include config dotfiles (`.env`, `.github/…`) — secrets live there — so
         // `hidden` stays off here; but never descend into the VCS internals.
         .hidden(false)
-        .filter_entry(|entry| entry.file_name() != OsStr::new(".git"));
+        // Never descend CF's own artifacts: `.git` internals, and the cache dir
+        // whose `inputs.db`/`index.db` would otherwise perturb the `cf_scope` tree
+        // hash on every run (Idea §6).
+        .filter_entry(|entry| {
+            let name = entry.file_name();
+            name != OsStr::new(".git") && name != OsStr::new(CACHE_DIR_NAME)
+        });
     builder.overrides(overrides);
 
     let mut files = Vec::new();

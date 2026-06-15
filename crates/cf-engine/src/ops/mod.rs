@@ -12,5 +12,6 @@ pub mod check;
 pub mod fix;
 pub mod index;
 pub mod normalize;
+pub mod provider_cache;
 pub mod suppress;
 pub mod triage;

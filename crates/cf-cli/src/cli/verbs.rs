@@ -37,12 +37,14 @@ const MAX_UNATTACHED_RULES_SHOWN: usize = 12;
 /// Returns [`CfError`] on any unrecoverable failure; `main` renders the cause
 /// chain and exits non-zero.
 pub(crate) fn run(cli: Cli) -> CfResult<i32> {
+    let use_cache = !cli.no_cache;
+    let stats = cli.stats;
     match cli.command {
         Command::Check {
             paths,
             format,
             strict,
-        } => run_check(&paths, format.into(), strict),
+        } => run_check(&paths, format.into(), strict, use_cache, stats),
         Command::Candidates { limit } => run_candidates(limit),
         Command::Doctor => run_doctor(),
         Command::Query {
@@ -63,7 +65,7 @@ pub(crate) fn run(cli: Cli) -> CfResult<i32> {
             comment_id,
             allow_significant,
         } => run_remove(&comment_id, allow_significant),
-        Command::Baseline { action } => run_baseline(&action),
+        Command::Baseline { action } => run_baseline(&action, use_cache),
         Command::Suppressions { .. } => Err(CfError::config(
             "`cf suppressions export` writes native directives into source and depends on the \
              suppression pass being applied during `cf check` (not yet wired) — see ops::suppress",
@@ -101,6 +103,8 @@ fn run_check(
     paths: &[PathBuf],
     format: cf_core::config::OutputFormat,
     strict: bool,
+    use_cache: bool,
+    stats: bool,
 ) -> CfResult<i32> {
     let root = root_for(paths)?;
     let config = config::discover(&root)?;
@@ -110,7 +114,7 @@ fn run_check(
         .map(|provider| provider as &dyn RuleProvider)
         .collect();
 
-    let result = ops::check::check(&root, &config, &provider_refs)?;
+    let result = ops::check::check(&root, &config, &provider_refs, use_cache)?;
     let rendered = render::render(&result.comments, format)?;
     print(&rendered);
 
@@ -118,6 +122,9 @@ fn run_check(
     // stdout; provider trouble + symbol-only findings to stderr so the operator
     // never reads a clean report that was actually missing a provider's results.
     report_diagnostics(&result);
+    if stats {
+        report_cache_stats(&result);
+    }
 
     // Persist the unified records into the two-layer index so the find/understand/
     // update verbs resolve against a real index (Idea §6).
@@ -173,12 +180,21 @@ fn report_diagnostics(result: &CheckResult) {
     }
 }
 
+/// Emits provider-result-cache effectiveness to stderr under `--stats` (Idea §6).
+fn report_cache_stats(result: &CheckResult) {
+    let stats = result.cache_stats;
+    eprintln!(
+        "cf: stats: provider cache — {} served from cache, {} ran",
+        stats.hits, stats.runs
+    );
+}
+
 /// `cf candidates` — the native worklist (rot + markers), ranked and bounded.
 fn run_candidates(limit: usize) -> CfResult<i32> {
     let root = root_for(&[])?;
     let config = config::discover(&root)?;
     let no_providers: [&dyn RuleProvider; 0] = [];
-    let result = ops::check::check(&root, &config, &no_providers)?;
+    let result = ops::check::check(&root, &config, &no_providers, true)?;
 
     // Native findings only — the agent-judged shortlist (Idea §9).
     let mut candidates: Vec<NativeCandidate> = result
@@ -431,7 +447,7 @@ fn print(text: &str) {
 /// `prune` drops entries whose findings no longer occur. The baseline lives at the
 /// repo root (committed, outside the gitignored cache) and is the diff anchor the
 /// CI path consumes (Idea §5).
-fn run_baseline(action: &BaselineAction) -> CfResult<i32> {
+fn run_baseline(action: &BaselineAction, use_cache: bool) -> CfResult<i32> {
     let root = root_for(&[])?;
     let config = config::discover(&root)?;
     let providers = builtins::load_all()?;
@@ -439,7 +455,7 @@ fn run_baseline(action: &BaselineAction) -> CfResult<i32> {
         .iter()
         .map(|provider| provider as &dyn RuleProvider)
         .collect();
-    let result = ops::check::check(&root, &config, &provider_refs)?;
+    let result = ops::check::check(&root, &config, &provider_refs, use_cache)?;
     report_diagnostics(&result);
 
     let identities = current_identities(&result);
@@ -521,6 +537,8 @@ mod tests {
             &[dir.to_path_buf()],
             cf_core::config::OutputFormat::Jsonl,
             strict,
+            false,
+            false,
         )
         .unwrap()
     }
@@ -532,7 +550,7 @@ mod tests {
         let dir = seeded_repo();
         let config = cf_core::config::ResolvedConfig::default();
         let no_providers: [&dyn RuleProvider; 0] = [];
-        let result = ops::check::check(dir.path(), &config, &no_providers).unwrap();
+        let result = ops::check::check(dir.path(), &config, &no_providers, false).unwrap();
 
         let identities = current_identities(&result);
         assert!(

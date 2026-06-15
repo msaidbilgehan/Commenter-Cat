@@ -47,6 +47,10 @@ pub(crate) struct Cli {
     /// Include suppressed findings in the output (audit view).
     #[arg(long, global = true)]
     pub(crate) show_suppressed: bool,
+
+    /// Bypass the provider-result cache (re-run every provider).
+    #[arg(long, global = true)]
+    pub(crate) no_cache: bool,
 }
 
 /// The verb set — 1:1 with the MCP tools (Idea §4a).

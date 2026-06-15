@@ -117,4 +117,14 @@ pub trait RuleProvider {
     /// Runs over `files` (already narrowed to `effective_scope`), producing
     /// normalized findings and a run state.
     fn run(&self, files: &[PathBuf], context: &ProviderContext<'_>) -> ProviderRun;
+
+    /// A cache-invalidation key for this provider's results (Idea §6) — combining
+    /// the resolved tool binary's content with the provider's config, so a tool
+    /// upgrade or a config change invalidates cached findings (Idea §5
+    /// comparability). `None` disables caching for this provider — a provider with
+    /// no stable external binary (an in-process native, a test mock) or one whose
+    /// binary cannot be resolved. The default is `None`.
+    fn version_key(&self) -> Option<String> {
+        None
+    }
 }
