@@ -1,6 +1,6 @@
 ---
 plan_slug: 2026-06-15-build-commenter-cat-engine
-last_updated: 2026-06-15T23:55:00Z
+last_updated: 2026-06-15T23:58:00Z
 schema_version: 1
 tasks:
   "1.1":
@@ -541,6 +541,24 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
 
 ## Recent Activity
 
+- 2026-06-15T23:58:00Z — **follow-up: `.env`/config secret scope + parallel native
+  pass** (two open observations from the dogfood pass, closed). (1) **Secret scope
+  (Idea §3/§5):** the provider-finding scope filter keyed off the comment-language
+  file set, so gitleaks secrets in `.env`/config (files CF deliberately does not
+  comment-analyze) were dropped with the genuinely out-of-scope hits. Added
+  `walk::walk_universe` (every non-ignored file, including config dotfiles like
+  `.env`, never `.git`, no language/generated filter); `ops::check::fuse` now
+  validates provider findings against this `cf_scope` universe, so a `.env` secret
+  is kept (as unattached — it maps to no comment) while a gitignored hit is still
+  dropped. `check()` now walks once for the comment set (was twice) + once for the
+  universe. (2) **Parallel native pass:** `native_pass` fans its per-file work
+  (read + tree-sitter extract + coalesce + map + markers) across the rayon pool via
+  a new `native_pass_file` helper; output stays deterministic (indexed parallel
+  collect over the sorted walk → identical order, Idea §11; golden/property/
+  integration suites pass unchanged). Added `rayon` to cf-engine. Gate: 335 tests
+  (was 334; +1 secret-scope regression test), clippy `-D warnings`, fmt. Remaining
+  open observations: gitleaks tree-scan perf (the §6/§7 tree-hash provider cache,
+  not yet wired into `cf check`); `--stats` no-op.
 - 2026-06-15T23:55:00Z — **post-dogfood checkpoint: wired `cf baseline`, fixed
   `install-hooks` help.** (1) The `cf install-hooks` clap help said *"pre-commit /
   pre-push"* but the verb installs the cache-warmer **post-commit / -checkout /

@@ -19,6 +19,14 @@ entries:
       `cf baseline accept|prune` end to end. `suppressions`/`issues` now return
       explicit "wire deliberately" errors rather than silent stubs. +1
       regression test (333→334).
+  - id: env-secret-scope-and-parallel-native-pass
+    date: 2026-06-15
+    kind: enhancement
+    summary: >-
+      Closed two dogfood open-observations: secret scanning now covers the full
+      cf_scope universe (.env/config via walk_universe, Idea §3/§5), and the
+      native pass runs in parallel via rayon (deterministic — identical output
+      order). +1 regression test (334→335).
 ---
 
 # Changelog
@@ -111,3 +119,35 @@ file is owner-authored (created outside `cf`'s only write path, which is comment
 edits); left untouched and flagged rather than edited.
 
 Gate after the follow-up: **334 tests** (was 333), clippy `-D warnings` clean, fmt clean.
+
+### 2026-06-15 — Follow-up: `.env`/config secret scope + parallel native pass
+
+Closed two of the open observations recorded after the dogfood pass.
+
+1. **Secret scope now covers the `cf_scope` universe (Idea §3/§5).** The
+   provider-finding scope filter in `ops::check::fuse` keyed off the
+   comment-language file set, so a gitleaks secret in `.env`/config — files CF
+   deliberately keeps out of the comment grammar (Idea §3) — was dropped along with
+   genuinely out-of-scope hits. Added `walk::walk_universe`: every non-ignored file
+   under the root (honoring `.gitignore` + `extra_ignores`), including config
+   dotfiles like `.env`, never descending into `.git`, with no language filter and
+   no generated/minified sniff. `fuse` now validates provider findings against this
+   universe, so a `.env` secret is **kept** (surfaced as unattached — it maps to no
+   comment) while a gitignored/excluded hit is still dropped. `check()` now walks
+   once for the comment-language set (it previously walked twice identically) plus
+   once for the universe. +1 regression test (`.env` kept, gitignored dropped).
+2. **Native pass parallelized with rayon.** `ops::check::native_pass` ran a
+   sequential per-file loop; the per-file work (read + tree-sitter extract +
+   coalesce + comment→code map + marker tag) is independent and CPU-bound. Extracted
+   a `native_pass_file` helper and fanned it across the rayon pool. **Determinism is
+   preserved** — `walk` returns a sorted slice and an indexed parallel `collect`
+   writes results back in index order, so the fused stream is identical to the
+   sequential pass (Idea §11); the golden, property, and integration suites pass
+   unchanged. Added `rayon` to `cf-engine` (already present transitively).
+
+Gate: **335 tests** (was 334), clippy `-D warnings` clean, fmt clean.
+
+**Remaining open observations** (from the dogfood entry, still not addressed): the
+gitleaks project-scoped tree-scan is slow on large trees (the §6/§7 tree-hash
+provider cache is the intended mitigation, not yet wired into `cf check`); `--stats`
+parses but is a no-op.
