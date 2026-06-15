@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local ONNX embeddings (fastembed/ort), never shipping comments to an external API
 - Filter-up suppression via `cf:*` directives and a committed Tier-2 baseline
 - `cf suppressions export` materializes CF's suppression set into each tool's native directives (`# noqa`, `eslint-disable-next-line`, `# shellcheck disable`, `# gitleaks:allow`), merged per line and written through the parse-invariant applier; idempotent, CF-native findings skipped
-- `cf issues sync` files flagged (marker) comments to the tracker, defaulting to a dry-run plan and filing only under `--apply`; cross-run idempotency via a committed ledger (`comment-finder.issues.toml`) keyed on Tier-4 comment identity
+- `cf issues sync` is bidirectional: forward-files flagged (marker) comments to the tracker and reverse-reconciles resolved (closed) issues by removing their marker comment through the parse-invariant applier (batched per file high→low). Defaults to a dry-run plan and mutates only under `--apply`; cross-run idempotency via a committed ledger (`comment-finder.issues.toml`) keyed on Tier-4 comment identity, with the resolved link retired from the ledger on removal
 - `cf check --show-suppressed` audit view, and `--stats` per-stage timing breakdown (walk / native / providers / fuse / index / total)
 - Output renderers: JSONL (canonical), terminal, SARIF 2.1.0, Markdown, and CSV, with CI exit codes
 - Git cache-warmer hooks (`cf install-hooks`) and CI integration with a two-key artifact cache

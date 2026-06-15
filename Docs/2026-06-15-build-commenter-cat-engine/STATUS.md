@@ -1,6 +1,6 @@
 ---
 plan_slug: 2026-06-15-build-commenter-cat-engine
-last_updated: 2026-06-16T02:30:00Z
+last_updated: 2026-06-16T03:15:00Z
 schema_version: 1
 tasks:
   "1.1":
@@ -541,6 +541,26 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
 
 ## Recent Activity
 
+- 2026-06-16T03:15:00Z — **wired closed-issue reconciliation into `cf issues sync`**
+  (the one follow-up the prior entry left open — now closed; `issues sync` is fully
+  bidirectional). New `issues::reconcile_resolved` (engine-owned): given the tracked
+  `(comment, token)` candidates, it queries the tracker read-only (cached by issue id, so
+  a comment with several markers costs one call per distinct issue), and for every comment
+  whose issue is now **closed** removes the marker comment via the parse-invariant applier,
+  **batched per file high-byte→low** so each removal leaves lower offsets valid. Writes are
+  per-file transactional (a file lands only if all its removals succeed); tracker/read/
+  unsafe-removal trouble degrades to a visible `skipped` note (Idea §5), only a mid-pass
+  *write* failure is fatal. The CLI drops each resolved token from the committed ledger
+  (retiring the link via new `IssueLedger::remove`) and saves. Dry-run previews resolutions
+  with a read-only query that degrades gracefully — a comment is removed only on a
+  *positive* closed confirmation (an unreachable/missing issue is treated as not-closed, the
+  safe default for a destructive op). A multi-marker comment is judged as a whole: it is
+  removed only when **every** one of its issues is closed, so a still-open concern is never
+  deleted from source. Verified: 7 reconcile unit tests (removes-closed, keeps-open,
+  dry-run-no-mutation, two-comments-high→low, id-cache, ledger-drop cycle, kept-while-any-
+  issue-open) + CLI dry-run smoke test (offline forward + graceful resolution preview,
+  source untouched). Gate: 351 tests (was 344, +7), clippy `-D warnings`, fmt. **No
+  follow-ups left.**
 - 2026-06-16T02:30:00Z — **closed the remaining open verbs** (the dogfood follow-up's
   last items). (1) **`--stats` per-stage timing** — `CheckResult` now carries a `Timings`
   struct (walk / native / providers / fuse), reported alongside the cache line as the §6

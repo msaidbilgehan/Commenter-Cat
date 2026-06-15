@@ -78,12 +78,16 @@ source/network verbs carry deliberate guardrails:
   `# gitleaks:allow`), **merged per line** (`# noqa: D400, D415`) and written through the
   parse-invariant applier (a code-altering insert aborts). Idempotent on the directive
   marker; CF-native findings have no native directive and are skipped.
-- `cf issues sync` is network + `gh`, outward-facing — so it **defaults to a dry-run plan**
-  and only files under `--apply`. Idempotency is a **committed** ledger
-  (`comment-finder.issues.toml`, beside the baseline, `LEDGER_FILENAME`) keyed on Tier-4
-  identity, so a marker filed by anyone is never re-filed. Forward filing only;
-  closed-issue reconciliation (removing a resolved marker comment via the applier — the
-  tested `issues::sync_resolution`) is the one deliberate follow-up.
+- `cf issues sync` is bidirectional and network + `gh`, outward-facing — so it **defaults
+  to a dry-run plan** and only mutates under `--apply`. Idempotency is a **committed**
+  ledger (`comment-finder.issues.toml`, beside the baseline, `LEDGER_FILENAME`) keyed on
+  Tier-4 identity, so a marker filed by anyone is never re-filed. **Forward:** file
+  marker comments not yet tracked. **Reverse (`issues::reconcile_resolved`):** a resolved
+  (closed) issue → remove its marker comment through the parse-invariant applier, batched
+  per file high→low; the resolved token is then dropped from the ledger. The dry-run
+  resolution preview is a read-only tracker query that degrades gracefully (an unreachable
+  issue is treated as not-closed — a comment is removed only on a *positive* closed
+  confirmation).
 
 ## Docs
 
