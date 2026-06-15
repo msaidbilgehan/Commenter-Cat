@@ -169,7 +169,12 @@ pub(crate) enum SuppressionsAction {
 #[command(rename_all = "kebab-case")]
 pub(crate) enum IssuesAction {
     /// Sync flagged comments to the issue tracker.
-    Sync,
+    Sync {
+        /// Actually file issues (network + `gh`). Without it, `sync` prints a
+        /// dry-run plan and never touches the tracker.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 /// The CLI's output-format flag, mapped to the engine's `OutputFormat`.
@@ -259,7 +264,12 @@ mod tests {
         let Command::Issues { action } = parse(&["cf", "issues", "sync"]).command else {
             panic!("expected issues");
         };
-        assert_eq!(action, IssuesAction::Sync);
+        assert_eq!(action, IssuesAction::Sync { apply: false });
+
+        let Command::Issues { action } = parse(&["cf", "issues", "sync", "--apply"]).command else {
+            panic!("expected issues");
+        };
+        assert_eq!(action, IssuesAction::Sync { apply: true });
     }
 
     #[test]

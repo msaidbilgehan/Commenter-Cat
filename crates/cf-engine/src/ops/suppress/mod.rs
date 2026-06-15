@@ -13,8 +13,10 @@
 pub mod directives;
 pub mod export;
 
+use cf_core::comment::Comment;
 use cf_core::finding::Finding;
 
+use crate::ops::baseline::Baseline;
 use directives::{Directive, DirectiveKind};
 
 /// One suppression decision: which finding, suppressed by which directive.
@@ -63,6 +65,67 @@ pub fn suppress(findings: &[Finding], directives: &[Directive]) -> SuppressionOu
         decisions,
         unused_directives,
     }
+}
+
+/// A finding suppressed within a `CheckResult`'s comments — located by index and
+/// annotated with what suppressed it (Idea §5: flagged, not dropped).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppressedFinding {
+    /// Index into `CheckResult::comments`.
+    pub comment_index: usize,
+    /// Index into that comment's `findings`.
+    pub finding_index: usize,
+    /// What suppressed it — a directive's `describe()` form, or `"baseline"`.
+    pub suppressed_by: String,
+}
+
+/// Runs the unified suppression pass over fused `comments` (Idea §5): inline
+/// `cf:*` directives (parsed from the comments themselves) and the committed
+/// Tier-2 `baseline` are the two inputs to **one** pass. Returns the suppressed
+/// findings, located + annotated — never dropped, so the caller keeps them in the
+/// index and only excludes them from default views.
+#[must_use]
+pub fn apply(comments: &[Comment], baseline: &Baseline) -> Vec<SuppressedFinding> {
+    let directives: Vec<Directive> = comments
+        .iter()
+        .filter_map(|comment| directives::parse(&comment.raw_text, comment.range.start_line))
+        .collect();
+
+    let mut suppressed = Vec::new();
+    for (comment_index, comment) in comments.iter().enumerate() {
+        // Inline directives apply by line/scope across the whole file, so the
+        // global directive set is matched against each comment's findings.
+        let outcome = suppress(&comment.findings, &directives);
+        for decision in &outcome.decisions {
+            suppressed.push(SuppressedFinding {
+                comment_index,
+                finding_index: decision.finding_index,
+                suppressed_by: decision.suppressed_by.clone(),
+            });
+        }
+        // The committed baseline (Tier-2) covers findings no directive caught.
+        let symbol = comment.bound_symbol.as_ref().map(|s| s.as_str());
+        let fingerprint = comment.cosmetic_fingerprint.as_deref().unwrap_or_default();
+        for (finding_index, finding) in comment.findings.iter().enumerate() {
+            let by_directive = outcome
+                .decisions
+                .iter()
+                .any(|decision| decision.finding_index == finding_index);
+            if by_directive {
+                continue;
+            }
+            if baseline.contains(symbol, fingerprint, &finding.provider_rule_id)
+                || baseline.contains(symbol, fingerprint, &finding.canonical_rule_id)
+            {
+                suppressed.push(SuppressedFinding {
+                    comment_index,
+                    finding_index,
+                    suppressed_by: "baseline".to_owned(),
+                });
+            }
+        }
+    }
+    suppressed
 }
 
 /// The index of the first directive that suppresses `finding`, if any.

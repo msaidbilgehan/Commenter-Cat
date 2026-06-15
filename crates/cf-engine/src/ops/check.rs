@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use cf_core::comment::Comment;
 use cf_core::config::ResolvedConfig;
@@ -20,9 +21,24 @@ use crate::extract::coalesce::coalesce;
 use crate::extract::extract_source;
 use crate::map::map_comments;
 use crate::markers::MarkerSet;
-use crate::ops::{normalize, provider_cache, triage};
+use crate::ops::{baseline, normalize, provider_cache, suppress, triage};
 use crate::provider::{ProviderContext, RuleProvider, RunState};
 use crate::walk::{walk, walk_universe, WalkOptions, WalkedFile};
+
+/// Per-stage wall-clock breakdown of a `cf check` run, surfaced by `--stats`
+/// (Idea §6 — the budget *shape*: warm interactive, cold provider-bound). These
+/// are timing-only and never influence the deterministic findings (Idea §11).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Timings {
+    /// The file walk — the comment-language set plus the `cf_scope` universe.
+    pub walk: Duration,
+    /// The native pass (extract → coalesce → map → tag markers, parallel).
+    pub native_pass: Duration,
+    /// Provider invocation — cache hashing + lookups + any subprocess.
+    pub providers: Duration,
+    /// Fusion — native findings, scope filtering, attachment, dedup.
+    pub fusion: Duration,
+}
 
 /// The unified result of `cf check` (Idea §5).
 #[derive(Debug)]
@@ -37,6 +53,12 @@ pub struct CheckResult {
     pub unattached: Vec<Finding>,
     /// Provider-cache outcome (hits vs runs) for `--stats` (Idea §6).
     pub cache_stats: provider_cache::CacheStats,
+    /// Per-stage wall-clock timings for `--stats` (Idea §6 budget shape).
+    pub timings: Timings,
+    /// Findings suppressed by inline `cf:*` directives or the committed baseline
+    /// (Idea §5) — located by index, kept in `comments`, excluded from default
+    /// views and never gating CI.
+    pub suppressed: Vec<suppress::SuppressedFinding>,
 }
 
 /// Runs `cf check` over `root`: the native pass, every provider, then fusion.
@@ -58,13 +80,39 @@ pub fn check(
     // file list); a second yields the broader `cf_scope` universe (every
     // non-ignored file) used to validate provider findings (Idea §3, §5).
     let scan_options = WalkOptions::from_scan_config(&config.scan);
+    let walk_start = Instant::now();
     let walked = walk(root, &scan_options)?;
+    let walk_only = walk_start.elapsed();
+    let native_start = Instant::now();
     let comments = native_pass(root, config, &walked)?;
+    let native_time = native_start.elapsed();
     let files: Vec<PathBuf> = walked.iter().map(|file| file.path.clone()).collect();
+    let universe_start = Instant::now();
     let universe = walk_universe(root, &scan_options)?;
-    fuse(
+    let walk_time = walk_only + universe_start.elapsed();
+    let mut result = fuse(
         root, config, comments, files, universe, providers, use_cache,
-    )
+    )?;
+    result.timings.walk = walk_time;
+    result.timings.native_pass = native_time;
+    result.suppressed = apply_suppression(root, &result.comments)?;
+    Ok(result)
+}
+
+/// Loads the committed baseline (if present) and runs the unified suppression
+/// pass — inline `cf:*` directives + the Tier-2 baseline (Idea §5) — over the
+/// fused comments. Suppressed findings are located + annotated, never dropped.
+fn apply_suppression(
+    root: &Path,
+    comments: &[Comment],
+) -> CfResult<Vec<suppress::SuppressedFinding>> {
+    let baseline_path = root.join(baseline::BASELINE_FILENAME);
+    let committed = if baseline_path.exists() {
+        baseline::load(&baseline_path)?
+    } else {
+        baseline::Baseline::default()
+    };
+    Ok(suppress::apply(comments, &committed))
 }
 
 /// The native pass over the walked files: extract → coalesce → map → tag markers.
@@ -120,6 +168,7 @@ fn fuse(
     providers: &[&dyn RuleProvider],
     use_cache: bool,
 ) -> CfResult<CheckResult> {
+    let fuse_start = Instant::now();
     // 1. Native findings (rot + marker triage) attach to their own comment, and
     //    the cosmetic fingerprint (the §4 identity field) is filled in so the
     //    persisted record, the baseline diff, and cross-scan identity all have it.
@@ -134,6 +183,7 @@ fn fuse(
     //    re-runs on unchanged input — the load-bearing performance lever), and
     //    record each run state (Idea §5: state, not exit code).
     let context = ProviderContext::new(root, &config.severity.overrides);
+    let providers_start = Instant::now();
     let cache = provider_cache::ProviderCache::build(root, &files, &universe, providers, use_cache);
     let mut provider_findings = Vec::new();
     let mut run_states = Vec::new();
@@ -148,6 +198,7 @@ fn fuse(
         run_states.push((provider.id().to_owned(), run.state));
         provider_findings.extend(run.findings);
     }
+    let providers_time = providers_start.elapsed();
 
     // CF owns the file universe (Idea §3, §5): `cf_scope` is *every* non-ignored
     // file, not just the comment-language subset — so a project-scoped tool (e.g.
@@ -162,11 +213,18 @@ fn fuse(
     let unattached = normalize::attach_findings(&mut comments, provider_findings);
     normalize::dedup_comment_findings(&mut comments);
 
+    let timings = Timings {
+        providers: providers_time,
+        fusion: fuse_start.elapsed().saturating_sub(providers_time),
+        ..Timings::default()
+    };
     Ok(CheckResult {
         comments,
         run_states,
         unattached,
         cache_stats,
+        timings,
+        suppressed: Vec::new(),
     })
 }
 

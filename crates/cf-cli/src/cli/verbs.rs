@@ -8,15 +8,17 @@
 //! return an explanatory error until wired deliberately. Output goes to stdout;
 //! the return value is the process exit code (Idea §8).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use cf_core::comment::Comment;
 use cf_core::config;
 use cf_core::error::{CfError, CfResult};
 use cf_core::finding::Origin;
 use cf_core::severity::Severity;
+use cf_engine::issues;
 use cf_engine::ops::baseline;
 use cf_engine::ops::check::CheckResult;
 use cf_engine::ops::index::{self, Session};
@@ -25,7 +27,7 @@ use cf_engine::provider::{builtins, RuleProvider, RunState};
 use cf_engine::render;
 use cf_engine::surface::{ranking, roundtrip, token_economy};
 
-use super::{BaselineAction, Cli, Command};
+use super::{BaselineAction, Cli, Command, IssuesAction, SuppressionsAction};
 
 /// Cap on the number of distinct unattached rule ids listed in diagnostics, so a
 /// pathological repo cannot flood stderr.
@@ -39,12 +41,20 @@ const MAX_UNATTACHED_RULES_SHOWN: usize = 12;
 pub(crate) fn run(cli: Cli) -> CfResult<i32> {
     let use_cache = !cli.no_cache;
     let stats = cli.stats;
+    let show_suppressed = cli.show_suppressed;
     match cli.command {
         Command::Check {
             paths,
             format,
             strict,
-        } => run_check(&paths, format.into(), strict, use_cache, stats),
+        } => run_check(
+            &paths,
+            format.into(),
+            strict,
+            use_cache,
+            stats,
+            show_suppressed,
+        ),
         Command::Candidates { limit } => run_candidates(limit),
         Command::Doctor => run_doctor(),
         Command::Query {
@@ -66,16 +76,10 @@ pub(crate) fn run(cli: Cli) -> CfResult<i32> {
             allow_significant,
         } => run_remove(&comment_id, allow_significant),
         Command::Baseline { action } => run_baseline(&action, use_cache),
-        Command::Suppressions { .. } => Err(CfError::config(
-            "`cf suppressions export` writes native directives into source and depends on the \
-             suppression pass being applied during `cf check` (not yet wired) — see ops::suppress",
-        )),
+        Command::Suppressions { action } => run_suppressions(&action, use_cache),
         Command::Mcp => run_mcp(),
         Command::InstallHooks => run_install_hooks(),
-        Command::Issues { .. } => Err(CfError::config(
-            "`cf issues sync` files/closes tracker issues (network + `gh`, outward-facing) and \
-             needs the issue ledger persisted to the index — wire deliberately, see issues::",
-        )),
+        Command::Issues { action } => run_issues(&action, use_cache),
     }
 }
 
@@ -105,7 +109,9 @@ fn run_check(
     strict: bool,
     use_cache: bool,
     stats: bool,
+    show_suppressed: bool,
 ) -> CfResult<i32> {
+    let total_start = Instant::now();
     let root = root_for(paths)?;
     let config = config::discover(&root)?;
     let providers = builtins::load_all()?;
@@ -115,20 +121,36 @@ fn run_check(
         .collect();
 
     let result = ops::check::check(&root, &config, &provider_refs, use_cache)?;
-    let rendered = render::render(&result.comments, format)?;
+
+    // Suppressed findings (inline `cf:*` directives + the committed baseline) are
+    // kept in the index but hidden from the default view and never gate CI (Idea
+    // §5: flagged, not dropped). `--show-suppressed` renders the full audit set;
+    // the CI verdict is always taken on the live (non-suppressed) findings.
+    let live = live_comments(&result);
+    let shown = if show_suppressed {
+        &result.comments
+    } else {
+        &live
+    };
+    let rendered = render::render(shown, format)?;
     print(&rendered);
 
     // Idea §5: a degraded guarantee must be *visible, not silent*. Findings on
     // stdout; provider trouble + symbol-only findings to stderr so the operator
     // never reads a clean report that was actually missing a provider's results.
     report_diagnostics(&result);
-    if stats {
-        report_cache_stats(&result);
-    }
+    report_suppressions(&result, show_suppressed);
 
     // Persist the unified records into the two-layer index so the find/understand/
-    // update verbs resolve against a real index (Idea §6).
+    // update verbs resolve against a real index (Idea §6). The full set is
+    // persisted — suppressed findings stay queryable for the audit view and export.
+    let persist_start = Instant::now();
     index::persist(&root, &result.comments, &index::default_embedder())?;
+    let persist_time = persist_start.elapsed();
+
+    if stats {
+        report_stats(&result, persist_time, total_start.elapsed());
+    }
 
     // `--strict` fails on any finding (fail_on lowered to the floor).
     let fail_on = if strict {
@@ -136,7 +158,53 @@ fn run_check(
     } else {
         config.severity.fail_on
     };
-    Ok(render::ci_exit_code(&result.comments, fail_on))
+    Ok(render::ci_exit_code(&live, fail_on))
+}
+
+/// Builds the default (non-audit) view of a check: a clone of the fused comments
+/// with every suppressed finding removed (Idea §5). Suppressed findings remain in
+/// `result.comments` (and thus in the index); this view is what renders and what
+/// the CI verdict gates on, so a `cf:disable` / baselined finding never fails CI.
+fn live_comments(result: &CheckResult) -> Vec<Comment> {
+    let hidden: BTreeSet<(usize, usize)> = result
+        .suppressed
+        .iter()
+        .map(|s| (s.comment_index, s.finding_index))
+        .collect();
+    result
+        .comments
+        .iter()
+        .enumerate()
+        .map(|(comment_index, comment)| {
+            let mut live = comment.clone();
+            live.findings = comment
+                .findings
+                .iter()
+                .enumerate()
+                .filter(|(finding_index, _)| !hidden.contains(&(comment_index, *finding_index)))
+                .map(|(_, finding)| finding.clone())
+                .collect();
+            live
+        })
+        .collect()
+}
+
+/// Notes how many findings the suppression pass hid, to stderr (Idea §5). In the
+/// default view they are hidden; `--show-suppressed` renders them, flipping the
+/// note to confirm the audit view so the count is never silently lost.
+fn report_suppressions(result: &CheckResult, show_suppressed: bool) {
+    let suppressed = result.suppressed.len();
+    if suppressed == 0 {
+        return;
+    }
+    if show_suppressed {
+        eprintln!("cf: note: {suppressed} suppressed finding(s) shown (audit view).");
+    } else {
+        eprintln!(
+            "cf: note: {suppressed} finding(s) suppressed by directives/baseline \
+             (hidden; pass --show-suppressed to view)."
+        );
+    }
 }
 
 /// Writes provider run-state and unattached-finding diagnostics to stderr.
@@ -180,12 +248,23 @@ fn report_diagnostics(result: &CheckResult) {
     }
 }
 
-/// Emits provider-result-cache effectiveness to stderr under `--stats` (Idea §6).
-fn report_cache_stats(result: &CheckResult) {
-    let stats = result.cache_stats;
+/// Emits the per-stage timing + provider-cache breakdown to stderr under `--stats`
+/// (Idea §6 — the budget *shape*, so a regression is visible).
+fn report_stats(result: &CheckResult, persist: Duration, total: Duration) {
+    let t = &result.timings;
+    eprintln!(
+        "cf: stats: walk {}ms · native {}ms · providers {}ms · fuse {}ms · index {}ms · total {}ms",
+        t.walk.as_millis(),
+        t.native_pass.as_millis(),
+        t.providers.as_millis(),
+        t.fusion.as_millis(),
+        persist.as_millis(),
+        total.as_millis(),
+    );
+    let cache = result.cache_stats;
     eprintln!(
         "cf: stats: provider cache — {} served from cache, {} ran",
-        stats.hits, stats.runs
+        cache.hits, cache.runs
     );
 }
 
@@ -493,6 +572,146 @@ fn run_baseline(action: &BaselineAction, use_cache: bool) -> CfResult<i32> {
     Ok(render::EXIT_OK)
 }
 
+/// `cf suppressions export` — materialize CF's suppression set into each tool's
+/// native directives (Idea §5; task 7.7). Runs a check to locate the suppressed
+/// findings, then writes the directives through the parse-invariant applier — the
+/// opt-in inverse of filter-up, for teams that also run the tools directly.
+fn run_suppressions(action: &SuppressionsAction, use_cache: bool) -> CfResult<i32> {
+    match action {
+        SuppressionsAction::Export => {
+            let root = root_for(&[])?;
+            let config = config::discover(&root)?;
+            let providers = builtins::load_all()?;
+            let provider_refs: Vec<&dyn RuleProvider> = providers
+                .iter()
+                .map(|provider| provider as &dyn RuleProvider)
+                .collect();
+            let result = ops::check::check(&root, &config, &provider_refs, use_cache)?;
+            report_diagnostics(&result);
+
+            let report = ops::suppress::export::export_suppressions(
+                &root,
+                &result.comments,
+                &result.suppressed,
+            )?;
+            print(&format!(
+                "Exported {} native directive(s) across {} file(s).\n",
+                report.exported,
+                report.files.len(),
+            ));
+            if report.already_present > 0 {
+                eprintln!(
+                    "cf: note: {} finding(s) already carried their native directive (skipped).",
+                    report.already_present
+                );
+            }
+            if report.no_native_directive > 0 {
+                eprintln!(
+                    "cf: note: {} suppressed finding(s) are CF-native — no tool directive to export.",
+                    report.no_native_directive
+                );
+            }
+            Ok(render::EXIT_OK)
+        }
+    }
+}
+
+/// `cf issues sync` — file flagged (marker) comments to the issue tracker (Idea
+/// §9), idempotently via the committed ledger. The default is a **dry-run plan**;
+/// `--apply` actually files (network + `gh`, outward-facing). Closed-issue
+/// reconciliation (removing a resolved marker comment) is the documented next step.
+fn run_issues(action: &IssuesAction, use_cache: bool) -> CfResult<i32> {
+    match action {
+        IssuesAction::Sync { apply } => run_issues_sync(*apply, use_cache),
+    }
+}
+
+fn run_issues_sync(apply: bool, use_cache: bool) -> CfResult<i32> {
+    let root = root_for(&[])?;
+    let config = config::discover(&root)?;
+    let providers = builtins::load_all()?;
+    let provider_refs: Vec<&dyn RuleProvider> = providers
+        .iter()
+        .map(|provider| provider as &dyn RuleProvider)
+        .collect();
+    let result = ops::check::check(&root, &config, &provider_refs, use_cache)?;
+    report_diagnostics(&result);
+
+    // The committed ledger gives cross-run / cross-machine idempotency: a marker
+    // already filed (by anyone) is never re-filed (Idea §9).
+    let ledger_path = root.join(issues::LEDGER_FILENAME);
+    let mut ledger = if ledger_path.exists() {
+        issues::ledger_file::load(&ledger_path)?
+    } else {
+        issues::IssueLedger::new()
+    };
+
+    let backend = issues::github::GhCliBackend::new();
+    let mut new_tokens: BTreeSet<String> = BTreeSet::new();
+    let mut filed = 0usize;
+    let mut already = 0usize;
+    let mut plan = String::new();
+
+    for comment in &result.comments {
+        for marker in &comment.markers {
+            let token = issues::identity_token(comment, marker);
+            if ledger.get(&token).is_some() {
+                already += 1;
+                continue;
+            }
+            // A reworded comment shares its Tier-4 token — file each identity once.
+            if !new_tokens.insert(token.clone()) {
+                continue;
+            }
+            if apply {
+                let request = issue_request(comment, marker);
+                let issue = issues::file_issue(&token, &request, &backend, &mut ledger)?;
+                filed += 1;
+                plan.push_str(&format!("  filed {token} → {}\n", issue.url));
+            } else {
+                plan.push_str(&format!(
+                    "  would file: {marker} at {}:{}\n",
+                    comment.path, comment.range.start_line
+                ));
+            }
+        }
+    }
+
+    if apply {
+        issues::ledger_file::save(&ledger, &ledger_path)?;
+    }
+
+    let mut out = if apply {
+        format!(
+            "Filed {filed} new issue(s); {already} already tracked. Ledger: {}\n",
+            ledger_path.display()
+        )
+    } else {
+        format!(
+            "Dry run: {} comment(s) would be filed; {already} already tracked. \
+             Re-run `cf issues sync --apply` to file (network + gh).\n",
+            new_tokens.len()
+        )
+    };
+    out.push_str(&plan);
+    print(&out);
+    Ok(render::EXIT_OK)
+}
+
+/// Builds the tracker request for a marker comment (Idea §9): a title from the
+/// marker + first line, a body carrying the location and full text, and labels.
+fn issue_request(comment: &Comment, marker: &str) -> issues::IssueRequest {
+    let first_line = comment.raw_text.lines().next().unwrap_or_default().trim();
+    issues::IssueRequest {
+        title: format!("{marker}: {first_line}"),
+        body: format!(
+            "Flagged by Commenter-Cat at `{}:{}`.\n\n```\n{}\n```\n",
+            comment.path, comment.range.start_line, comment.raw_text
+        ),
+        labels: vec!["comment-finder".to_owned(), marker.to_owned()],
+    }
+}
+
 /// The Tier-2 `(bound_symbol, cosmetic_fingerprint, provider_rule_id)` identity of
 /// every current finding — the keys the baseline snapshots and matches on (Idea §5;
 /// the CI diff matches both provider and canonical rule ids, so the precise
@@ -537,6 +756,7 @@ mod tests {
             &[dir.to_path_buf()],
             cf_core::config::OutputFormat::Jsonl,
             strict,
+            false,
             false,
             false,
         )

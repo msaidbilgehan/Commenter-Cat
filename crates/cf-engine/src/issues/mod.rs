@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod github;
+pub mod ledger_file;
 
 use std::collections::BTreeMap;
 
@@ -18,6 +19,7 @@ use cf_core::error::CfResult;
 use crate::ops::apply::{self, ApplyResult};
 
 pub use backend::{IssueBackend, IssueRef, IssueRequest};
+pub use ledger_file::{LEDGER_FILENAME, LEDGER_VERSION};
 
 /// The stable Tier-4 identity token an issue is filed against (Idea §9). Built
 /// from the parts that survive a prose rewording — the bound symbol, the comment
@@ -62,6 +64,14 @@ impl IssueLedger {
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Iterates the recorded `(token, issue)` pairs in token order — the
+    /// persistence seam ([`ledger_file`]) flushes this to committed truth.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &IssueRef)> {
+        self.entries
+            .iter()
+            .map(|(token, issue)| (token.as_str(), issue))
     }
 
     /// Whether the ledger is empty.
