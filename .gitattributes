@@ -1,0 +1,18 @@
+# Line-ending policy: store and check out source as LF on every platform.
+#
+# Without this, the Windows CI runner's `core.autocrlf` converts LF->CRLF on
+# checkout, and `cargo fmt --all --check` (rustfmt.toml: newline_style = "Unix")
+# then rejects every file with "Incorrect newline style", failing the whole
+# `test (windows-latest)` job before clippy/tests ever run. Pinning eol=lf keeps
+# the format gate green across the OS matrix.
+* text=auto eol=lf
+
+# Belt-and-suspenders for the format gate and for shell scripts (must be LF).
+*.rs   text eol=lf
+*.sh   text eol=lf
+
+# Never normalize binaries (none committed today; future-proofing the policy).
+*.png  binary
+*.onnx binary
+*.gz   binary
+*.zip  binary

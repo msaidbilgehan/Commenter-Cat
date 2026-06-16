@@ -1,6 +1,6 @@
 //! Cache location resolution (Idea §6; task 4.8).
 //!
-//! The cache lives at `<repo_root>/.comment-finder/` — gitignored, local, and
+//! The cache lives at `<repo_root>/.commenter-cat/` — gitignored, local, and
 //! rebuildable (shared truth is CI, Idea §6, §7). The repo root is resolved via
 //! gitoxide (handling worktrees/submodules); outside a repo it falls back to the
 //! scan root so queries still work with no git.
@@ -13,7 +13,7 @@ use cf_core::error::{CfError, CfResult};
 use crate::git::repo::Repo;
 
 /// The gitignored per-project cache directory name (Idea §6).
-pub const CACHE_DIR_NAME: &str = ".comment-finder";
+pub const CACHE_DIR_NAME: &str = ".commenter-cat";
 
 /// The content-addressed input store filename.
 pub const INPUTS_DB_FILE: &str = "inputs.db";

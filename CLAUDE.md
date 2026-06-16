@@ -58,10 +58,10 @@ Version/edition/MSRV are workspace-inherited — bump in the root `Cargo.toml`
 
 ## Storage
 
-- Two-layer per-project cache at `.comment-finder/` (`CACHE_DIR_NAME`), **gitignored**:
+- Two-layer per-project cache at `.commenter-cat/` (`CACHE_DIR_NAME`), **gitignored**:
   content-addressed `inputs.db` (survives schema bumps) + derived `index.db` (cheap re-derive).
-- **Cache keys on content hash, not path+mtime** ("mtime is a liar"). Never commit `.comment-finder/`.
-- `comment-finder.baseline.toml` (`BASELINE_FILENAME`) and `comment-finder.toml`
+- **Cache keys on content hash, not path+mtime** ("mtime is a liar"). Never commit `.commenter-cat/`.
+- `commenter-cat.baseline.toml` (`BASELINE_FILENAME`) and `commenter-cat.toml`
   (`CONFIG_FILENAME`) are **committed**, beside the config, outside the cache.
 
 ## CLI status (reality vs. plan)
@@ -80,7 +80,7 @@ source/network verbs carry deliberate guardrails:
   marker; CF-native findings have no native directive and are skipped.
 - `cf issues sync` is bidirectional and network + `gh`, outward-facing — so it **defaults
   to a dry-run plan** and only mutates under `--apply`. Idempotency is a **committed**
-  ledger (`comment-finder.issues.toml`, beside the baseline, `LEDGER_FILENAME`) keyed on
+  ledger (`commenter-cat.issues.toml`, beside the baseline, `LEDGER_FILENAME`) keyed on
   Tier-4 identity, so a marker filed by anyone is never re-filed. **Forward:** file
   marker comments not yet tracked. **Reverse (`issues::reconcile_resolved`):** a resolved
   (closed) issue → remove its marker comment through the parse-invariant applier, batched

@@ -520,7 +520,7 @@ fn print(text: &str) {
     let _ = stdout.write_all(text.as_bytes());
 }
 
-/// `cf baseline accept|prune` — manage the committed `comment-finder.baseline.toml`.
+/// `cf baseline accept|prune` — manage the committed `commenter-cat.baseline.toml`.
 ///
 /// `accept` snapshots the current findings (Tier-2 identities) into the baseline;
 /// `prune` drops entries whose findings no longer occur. The baseline lives at the
@@ -735,7 +735,7 @@ fn issue_request(comment: &Comment, marker: &str) -> issues::IssueRequest {
             "Flagged by Commenter-Cat at `{}:{}`.\n\n```\n{}\n```\n",
             comment.path, comment.range.start_line, comment.raw_text
         ),
-        labels: vec!["comment-finder".to_owned(), marker.to_owned()],
+        labels: vec!["commenter-cat".to_owned(), marker.to_owned()],
     }
 }
 

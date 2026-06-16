@@ -64,7 +64,7 @@ tasks:
     notes: "Idea §6 Hybrid retrieval. Feeds the `query` find verb (§4a). Depends on both FTS (4.4) and vec (4.6)."
   - id: "4.8"
     name: implement-rebuild-from-inputs
-    action: "Create the deterministic rebuild pass: on an index.db schema mismatch (or explicit rebuild), drop and re-derive index.db from inputs.db — re-inserting precomputed provider JSON + vectors into fresh structures with no provider re-run and no re-embed; resolve repo root + cache location at <repo_root>/.comment-finder/ (gitignored), handling worktrees/submodules."
+    action: "Create the deterministic rebuild pass: on an index.db schema mismatch (or explicit rebuild), drop and re-derive index.db from inputs.db — re-inserting precomputed provider JSON + vectors into fresh structures with no provider re-run and no re-embed; resolve repo root + cache location at <repo_root>/.commenter-cat/ (gitignored), handling worktrees/submodules."
     files: [crates/cf-engine/src/storage/rebuild.rs, crates/cf-engine/src/storage/location.rs]
     depends_on: ["4.7", "4.3"]
     parallel_safe: false

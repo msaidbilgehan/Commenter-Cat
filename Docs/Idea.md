@@ -409,8 +409,8 @@ and is never itself a finding target):
   `origin` (`ruff`), or omitted = **all**.
 - **Baseline file** for bulk/legacy, matched at **Tier 2** (cosmetic, §4) — never fuzzy.
   Inline directives + baseline are two inputs to **one** suppression pass.
-- **Baseline on-disk format:** a **committed** file — `comment-finder.baseline.toml` beside
-  the config, *shared truth* and therefore **outside** the gitignored `.comment-finder/`
+- **Baseline on-disk format:** a **committed** file — `commenter-cat.baseline.toml` beside
+  the config, *shared truth* and therefore **outside** the gitignored `.commenter-cat/`
   cache. Sorted, line-oriented, one entry per suppressed identity
   `(bound_symbol, cosmetic_fingerprint, rule)` + optional reason/date, canonically ordered to
   minimize merge conflicts (lockfile-style). `cf baseline accept` snapshots current findings;
@@ -527,7 +527,7 @@ coordinate_system    = "1-based-utf8"
   `command` + `[capabilities]`, no field-paths. (CF already *emits* SARIF, §8; now ingests.)
 - **Coordinates** are a *declared convention* (`1-based-utf8`, …); CF does the byte-offset
   conversion natively.
-- **Discovery:** bundled built-ins + project `.comment-finder/providers/*.manifest.toml`;
+- **Discovery:** bundled built-ins + project `.commenter-cat/providers/*.manifest.toml`;
   selected per language in `[providers]`.
 
 **Tier 2 — Native providers (escape hatch; compiled Rust `RuleProvider`).** Reserved for
@@ -678,7 +678,7 @@ nothing.
 
 ### Location & lifecycle
 
-- **Per-project, auto-initialized, gitignored** at `<repo_root>/.comment-finder/`
+- **Per-project, auto-initialized, gitignored** at `<repo_root>/.commenter-cat/`
   (`inputs.db` + `index.db`).
 - A local, rebuildable cache — never committed. **Shared/team truth is CI's job** (§7).
 - **Repo-root resolution** handles `git worktree` + submodules via
@@ -960,7 +960,7 @@ CRLF, and native artifacts are platform-sensitive.
 | **Identity** | Composite `(bound_symbol, kind, cosmetic_fingerprint)`; tiered match — cosmetic/precise for suppression, fuzzy opt-in for issue/blame (§4). |
 | **Config** | TOML, walk-up + hierarchical cascade, `CF_*` env, XDG global, versioned/validated. |
 | **sqlite-vec** | Core. Hybrid FTS5 + vector; engine-local ONNX embeddings. **Two-layer cache** — content-addressed `inputs.db` (survives) + derived `index.db` (rebuilt, never migrated) (§6, §11). |
-| **Name** | **Commenter-Cat** — kept: `cf` binary, "CF" abbrev, `cf:` directive, `.comment-finder/` all cohere with it (renaming to the repo's *Commenter-Cat* would orphan ~20 "CF" usages for a cosmetic gain). Reversible if brand > coherence. `cf` collides with Cloud Foundry's CLI; `comment-finder` is the long-form alias. |
+| **Name** | **Commenter-Cat** — the short `cf` handle is kept everywhere it is terse and load-bearing: the `cf` binary, the "CF" abbrev, the `cf:` directive, and `CF_*` env (renaming those ~20 usages buys nothing). The long-form alias and on-disk names align with the brand: **`commenter-cat`** long-form, `.commenter-cat/` cache dir, and `commenter-cat.toml` / `.baseline.toml` / `.issues.toml`. `cf` collides with Cloud Foundry's CLI, so `commenter-cat` is the unambiguous long-form. |
 | **Performance** | Two regimes — warm/incremental interactive (provider-result cache the lever), cold provider-bound + rayon-parallel; memory O(workers), not repo size; `cf check --stats` per-stage (§6). |
 | **CI** | Restore two artifacts — `inputs.db` (provider/config-keyed, reused across CF upgrades) + `index.db` (full comparability key, re-derived on miss); incremental on hit; publish SARIF + report + new cache; diff vs. committed baseline; `PARTIAL` ⇒ degraded verdict (§7). |
 | **Tech stack** | Native-Rust hot path — tree-sitter · `ignore` · rayon · rusqlite (FTS5 + sqlite-vec) · ONNX; agent surface via `rmcp`, git via `gix`, CLI via `clap`. Full table §10. |

@@ -5,7 +5,7 @@
 /target/
 
 # Commenter-Cat per-project cache (Idea §6) — local, rebuildable, never committed.
-.comment-finder/
+.commenter-cat/
 
 # fastembed-downloaded ONNX model cache — large, rebuildable, never committed.
 .fastembed_cache/

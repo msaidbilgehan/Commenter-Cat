@@ -11,7 +11,7 @@ patterns:
   - "Greenfield repo: only Docs/Idea.md, LICENSE, .gitignore, .claude/ exist — no Cargo.toml, no source yet"
   - "Target layout: Cargo workspace with cf-core (substrate types), cf-engine (orchestration library + MCP/render/storage/provider/ops), cf-cli (the `cf` binary)"
   - "MCP verbs are 1:1 with CLI verbs — both share one canonical verb surface on the cf-engine library (Idea §4a)"
-  - "Engine is the sole SQLite writer; cache is two layers (content-addressed inputs.db + derived index.db), gitignored at <repo_root>/.comment-finder/"
+  - "Engine is the sole SQLite writer; cache is two layers (content-addressed inputs.db + derived index.db), gitignored at <repo_root>/.commenter-cat/"
   - "Rule content is delegated, never reimplemented; providers are adapters (manifest Tier 1 / native Tier 2) behind a RuleProvider trait; built-ins dogfood the manifest format"
   - "Layer discipline: domain code (cf-core) never imports infrastructure (rusqlite/subprocess/git); adapters translate at the seams"
 reusable:
@@ -35,7 +35,7 @@ relevant_rules:
 
 ## Patterns to Follow
 - **Three-crate workspace:** `cf-core` (pure substrate types: error, version, config, finding, identity) · `cf-engine` (orchestration: walk, extract, map, git, storage, provider, ops, render, mcp, surface, ci, issues, hooks) · `cf-cli` (the `cf` binary). MCP and CLI share the engine library so verbs stay 1:1.
-- **Sole-writer storage:** the engine is the only SQLite writer; WAL mode; two-layer cache (content-addressed `inputs.db` survives schema bumps, derived `index.db` rebuilds), gitignored at `<repo_root>/.comment-finder/`.
+- **Sole-writer storage:** the engine is the only SQLite writer; WAL mode; two-layer cache (content-addressed `inputs.db` survives schema bumps, derived `index.db` rebuilds), gitignored at `<repo_root>/.commenter-cat/`.
 - **Delegate, don't reimplement:** rule content comes from ruff/eslint/shellcheck/gitleaks via `RuleProvider` adapters; built-ins ship as manifests (dogfooding); `cf` only spawns JSON-mode subprocesses and normalizes.
 - **Layer discipline:** `cf-core` (domain) imports no infrastructure; subprocess/SQLite/git errors translate to `CfError` at the `cf-engine` adapter boundary.
 - **Determinism + safe-write are the two promises** — every design choice (content-hash keys, canonical ordering, parse-invariance, rebuild-over-migrate) exists to uphold them, and they are property-tested, not asserted.

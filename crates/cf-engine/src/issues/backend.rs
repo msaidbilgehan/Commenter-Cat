@@ -15,7 +15,7 @@ pub struct IssueRequest {
     pub title: String,
     /// The body (the comment, its location, and a back-reference).
     pub body: String,
-    /// Labels to apply (e.g. `comment-finder`, the marker name).
+    /// Labels to apply (e.g. `commenter-cat`, the marker name).
     pub labels: Vec<String>,
 }
 

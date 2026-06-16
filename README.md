@@ -146,17 +146,17 @@ Configuration is discovered automatically, nearest-first:
 
 1. `CF_*` environment variables (e.g. `CF_SEVERITY_FAIL_ON`, `CF_PROVIDERS_PYTHON`,
    `CF_OUTPUT_DEFAULT_FORMAT`) — highest precedence.
-2. `comment-finder.toml` files, walked up from the working directory (nearest wins).
-3. The XDG global config at `$XDG_CONFIG_HOME/comment-finder/config.toml`.
+2. `commenter-cat.toml` files, walked up from the working directory (nearest wins).
+3. The XDG global config at `$XDG_CONFIG_HOME/commenter-cat/config.toml`.
 
 Sections include `[scan]`, `[providers]`, `[markers]`, `[severity]`, `[search]`, and `[output]`.
 
 **Two project files sit beside the config (both versioned, both outside the cache):**
 
-- `comment-finder.baseline.toml` — the **committed** suppression baseline (lockfile-style,
+- `commenter-cat.baseline.toml` — the **committed** suppression baseline (lockfile-style,
   canonically ordered for minimal merge conflicts).
 
-The per-project cache lives at `<repo_root>/.comment-finder/` (two SQLite files: a
+The per-project cache lives at `<repo_root>/.commenter-cat/` (two SQLite files: a
 content-addressed `inputs.db` and a derived `index.db`). It is **gitignored** — local,
 rebuildable, never committed. Shared/team truth is CI's job.
 

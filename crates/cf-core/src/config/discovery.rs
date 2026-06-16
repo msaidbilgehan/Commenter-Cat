@@ -4,8 +4,8 @@
 //! ## Precedence (highest wins)
 //!
 //! 1. `CF_*` environment variables.
-//! 2. `comment-finder.toml` files, **nearest directory first** (walk-up cascade).
-//! 3. The XDG global config (`$XDG_CONFIG_HOME/comment-finder/config.toml`).
+//! 2. `commenter-cat.toml` files, **nearest directory first** (walk-up cascade).
+//! 3. The XDG global config (`$XDG_CONFIG_HOME/commenter-cat/config.toml`).
 //! 4. Built-in defaults (applied by [`ConfigFile::resolve`]).
 //!
 //! The filesystem/env-reading entry points ([`discover`], [`from_env`]) are thin
@@ -26,12 +26,12 @@ use super::model::{
     ProvidersSection, ResolvedConfig, ScanSection, SearchSection, SeveritySection,
 };
 
-/// The per-directory config filename (sits beside `comment-finder.baseline.toml`,
-/// Idea §5; outside the gitignored `.comment-finder/` cache, Idea §6).
-pub const CONFIG_FILENAME: &str = "comment-finder.toml";
+/// The per-directory config filename (sits beside `commenter-cat.baseline.toml`,
+/// Idea §5; outside the gitignored `.commenter-cat/` cache, Idea §6).
+pub const CONFIG_FILENAME: &str = "commenter-cat.toml";
 
 /// The XDG global config sub-path under the config home directory.
-pub const GLOBAL_CONFIG_SUBPATH: &str = "comment-finder/config.toml";
+pub const GLOBAL_CONFIG_SUBPATH: &str = "commenter-cat/config.toml";
 
 /// The environment-variable prefix for config overrides (`CF_<SECTION>_<FIELD>`).
 pub const ENV_PREFIX: &str = "CF_";
@@ -113,7 +113,7 @@ fn assemble(
     acc.resolve()
 }
 
-/// Returns existing `comment-finder.toml` paths from `start` up to the
+/// Returns existing `commenter-cat.toml` paths from `start` up to the
 /// filesystem root, **nearest first**.
 fn walk_up_config_paths(start: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
@@ -378,12 +378,12 @@ mod tests {
     fn test_walk_up_cascade_nearer_dir_wins() {
         let tmp = TempDir::new();
         tmp.write(
-            "comment-finder.toml",
+            "commenter-cat.toml",
             "version = 1\n[output]\ndefault_format = \"terminal\"\n[scan]\nrespect_gitignore = false\n",
         );
         let child = tmp.dir("pkg/sub");
         tmp.write(
-            "pkg/sub/comment-finder.toml",
+            "pkg/sub/commenter-cat.toml",
             "version = 1\n[output]\ndefault_format = \"jsonl\"\n",
         );
 
@@ -398,7 +398,7 @@ mod tests {
     fn test_env_overrides_file() {
         let tmp = TempDir::new();
         tmp.write(
-            "comment-finder.toml",
+            "commenter-cat.toml",
             "version = 1\n[output]\ndefault_format = \"terminal\"\n",
         );
         let env = env_map(&[("CF_OUTPUT_DEFAULT_FORMAT", "jsonl")]);
@@ -417,7 +417,7 @@ mod tests {
         let global = tmp.write("global.toml", "version = 1\n[search]\nembeddings = \"local\"\n[output]\ndefault_format = \"markdown\"\n");
         let project = tmp.dir("project");
         tmp.write(
-            "project/comment-finder.toml",
+            "project/commenter-cat.toml",
             "version = 1\n[output]\ndefault_format = \"csv\"\n",
         );
 
@@ -432,7 +432,7 @@ mod tests {
     fn test_unknown_future_version_is_hard_error() {
         let tmp = TempDir::new();
         let future = CONFIG_VERSION + 1;
-        tmp.write("comment-finder.toml", &format!("version = {future}\n"));
+        tmp.write("commenter-cat.toml", &format!("version = {future}\n"));
 
         let err = discover_in(&tmp.path, &no_env(), None).unwrap_err();
         let message = err.to_string();

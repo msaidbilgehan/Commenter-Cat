@@ -1,7 +1,7 @@
 //! The committed baseline file format (Idea §5; task 7.5).
 //!
-//! `comment-finder.baseline.toml` is a **committed** file beside the config —
-//! *shared truth*, and therefore **outside** the gitignored `.comment-finder/`
+//! `commenter-cat.baseline.toml` is a **committed** file beside the config —
+//! *shared truth*, and therefore **outside** the gitignored `.commenter-cat/`
 //! cache. It is sorted and line-oriented (one entry per suppressed identity),
 //! canonically ordered to minimize merge conflicts (lockfile-style). Entries are
 //! matched at **Tier 2** (cosmetic identity, never fuzzy, Idea §4/§5).
@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The committed baseline filename (beside the config, outside the cache).
-pub const BASELINE_FILENAME: &str = "comment-finder.baseline.toml";
+pub const BASELINE_FILENAME: &str = "commenter-cat.baseline.toml";
 
 /// The current baseline format version (migrated in place, Idea §11).
 pub const BASELINE_VERSION: u32 = 1;

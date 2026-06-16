@@ -38,6 +38,21 @@ jobs:
       - name: Test (unit + property + golden + contract + integration + MCP)
         run: cargo test --workspace
 
+  embeddings:
+    name: real-ONNX embeddings (the ignored test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the real-embedding test the fast suite skips
+        # `cargo test` keeps this #[ignore]d so the default suite stays offline
+        # and fast (CLAUDE.md). CI covers the real ONNX embedding path here, in
+        # its own job off the critical path; it needs network on a cold cache to
+        # fetch the model.
+        run: cargo test -p cf-engine -- --ignored
+
   reproducibility:
     name: reproducibility (byte-identical report)
     runs-on: ubuntu-latest

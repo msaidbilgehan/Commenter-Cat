@@ -133,7 +133,7 @@ mod tests {
         let request = IssueRequest {
             title: "TODO: fix parser".to_owned(),
             body: "see app.py:12".to_owned(),
-            labels: vec!["comment-finder".to_owned(), "TODO".to_owned()],
+            labels: vec!["commenter-cat".to_owned(), "TODO".to_owned()],
         };
         let args = backend.create_args(&request);
         assert_eq!(args[0..2], ["issue", "create"]);

@@ -65,7 +65,7 @@ assumptions:
     assumption: "The crate split is cf-core (types) + cf-engine (orchestration incl. MCP) + cf-cli (binary), with MCP and CLI sharing the engine library so verbs stay 1:1."
     confirmed_by: "Idea §4a (MCP verbs 1:1 with CLI) + §10 (cf binary, rmcp surface) — a conservative naming/layout default recorded per the planner minor-unclarity rule"
   - id: A4
-    assumption: "The product/binary keeps the name Commenter-Cat with the `cf` binary, `cf:` directive, and `.comment-finder/` cache dir (the design's chosen, reversible naming)."
+    assumption: "The product/binary keeps the name Commenter-Cat with the `cf` binary, `cf:` directive, and `.commenter-cat/` cache dir (the design's chosen, reversible naming)."
     confirmed_by: "Idea §12 Name decision — kept for coherence across ~20 'CF' usages"
   - id: A5
     assumption: "No Rust-specific user rule file exists; general.md governs the Rust engine, python.md applies only to Python test fixtures."
@@ -74,7 +74,7 @@ assumptions:
     assumption: "Implementation-tuning values (worker counts, timeouts, ranking weights, JSONPath lib, embedding model) are decided in code during the relevant phase, not in this plan."
     confirmed_by: "Idea §14 explicitly defers these to implementation-tuning"
 rollback:
-  strategy: "Greenfield build, so rollback is per-task git revert — each task is a focused, independently-revertable change to new files. The runtime cache is rebuildable + gitignored (never a rollback concern). The only non-rebuildable artifact is the committed baseline (comment-finder.baseline.toml), which migrates in place via `cf baseline migrate` and is read current + N-1. STATUS.md tracks per-task waypoints; a failed task returns to queued (attempt++)."
+  strategy: "Greenfield build, so rollback is per-task git revert — each task is a focused, independently-revertable change to new files. The runtime cache is rebuildable + gitignored (never a rollback concern). The only non-rebuildable artifact is the committed baseline (commenter-cat.baseline.toml), which migrates in place via `cf baseline migrate` and is read current + N-1. STATUS.md tracks per-task waypoints; a failed task returns to queued (attempt++)."
   trigger_states: [failed, blocked]
 ---
 
@@ -100,4 +100,4 @@ None are blocking — all are Idea §14 implementation-tuning decisions made in-
 All confirmable from the codebase analysis or the Idea spec (see frontmatter `confirmed_by`): greenfield workspace creation (A1), Rust 2021 / MSRV 1.96 (A2), the three-crate split with MCP/CLI sharing the engine (A3, a conservative default per the minor-unclarity rule), the kept Commenter-Cat/`cf` naming (A4), `general.md` as the governing rule set (A5), and implementation-tuning values decided in-code (A6).
 
 ## Rollback Strategy
-Greenfield build → rollback is a per-task `git revert` of focused changes to new files; tasks are independently revertable. The runtime two-layer cache is rebuildable and gitignored, never a rollback concern (Idea §6). The only non-rebuildable artifact is the **committed baseline** (`comment-finder.baseline.toml`), which migrates in place (`cf baseline migrate`, read current + N-1, Idea §11). `STATUS.md` tracks per-task waypoints; a failed task returns to `queued` with `attempt` incremented.
+Greenfield build → rollback is a per-task `git revert` of focused changes to new files; tasks are independently revertable. The runtime two-layer cache is rebuildable and gitignored, never a rollback concern (Idea §6). The only non-rebuildable artifact is the **committed baseline** (`commenter-cat.baseline.toml`), which migrates in place (`cf baseline migrate`, read current + N-1, Idea §11). `STATUS.md` tracks per-task waypoints; a failed task returns to `queued` with `attempt` incremented.

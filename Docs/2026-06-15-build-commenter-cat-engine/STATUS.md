@@ -10,7 +10,7 @@ tasks:
     started_at: 2026-06-15T09:00:00Z
     validated_at: 2026-06-15T09:35:00Z
     completed_at: 2026-06-15T09:35:00Z
-    notes: "Workspace (cf-core/cf-engine/cf-cli), edition 2021, MSRV 1.96, workspace.dependencies (thiserror/serde/toml), workspace lints (deny-warnings gate, unwrap/expect/print guards), rustfmt.toml, clippy.toml, Cargo.lock committed, .gitignore updated for /target + .comment-finder/."
+    notes: "Workspace (cf-core/cf-engine/cf-cli), edition 2021, MSRV 1.96, workspace.dependencies (thiserror/serde/toml), workspace lints (deny-warnings gate, unwrap/expect/print guards), rustfmt.toml, clippy.toml, Cargo.lock committed, .gitignore updated for /target + .commenter-cat/."
     attempt: 1
   "1.2":
     state: done
@@ -208,7 +208,7 @@ tasks:
     started_at: 2026-06-15T15:45:00Z
     validated_at: 2026-06-15T16:00:00Z
     completed_at: 2026-06-15T16:00:00Z
-    notes: "storage/{rebuild,location}.rs: derive_index re-builds index.db from inputs.db reusing cached vectors (re-embed ONLY on miss) — verified ZERO re-embed via CountingEmbedder + deterministic re-derive (identical query results). needs_rebuild detects schema-version mismatch via raw read. location.rs: <repo_root>/.comment-finder/ resolution via gix (worktree-aware) + non-git fallback."
+    notes: "storage/{rebuild,location}.rs: derive_index re-builds index.db from inputs.db reusing cached vectors (re-embed ONLY on miss) — verified ZERO re-embed via CountingEmbedder + deterministic re-derive (identical query results). needs_rebuild detects schema-version mismatch via raw read. location.rs: <repo_root>/.commenter-cat/ resolution via gix (worktree-aware) + non-git fallback."
     attempt: 1
   "5.1":
     state: done
@@ -343,7 +343,7 @@ tasks:
     started_at: 2026-06-15T19:40:00Z
     validated_at: 2026-06-15T19:50:00Z
     completed_at: 2026-06-15T19:50:00Z
-    notes: "ops/baseline/{file_format,mod}.rs: committed comment-finder.baseline.toml (BASELINE_FILENAME, outside the gitignored cache). BaselineEntry(bound_symbol,cosmetic_fingerprint,rule,reason?,date?) matched at Tier 2 (never fuzzy). canonicalize() sorts+dedups by key (lockfile-style, minimal merge conflicts). accept()/prune() deterministic; load()/save() with unknown-future-version hard error. 5 tests."
+    notes: "ops/baseline/{file_format,mod}.rs: committed commenter-cat.baseline.toml (BASELINE_FILENAME, outside the gitignored cache). BaselineEntry(bound_symbol,cosmetic_fingerprint,rule,reason?,date?) matched at Tier 2 (never fuzzy). canonicalize() sorts+dedups by key (lockfile-style, minimal merge conflicts). accept()/prune() deterministic; load()/save() with unknown-future-version hard error. 5 tests."
     attempt: 1
   "7.6":
     state: done
@@ -574,7 +574,7 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
   parse-invariant applier (a code-altering insert aborts the file untouched); idempotent on
   the directive marker. (4) **`cf issues sync`** — forward-files marker comments to the
   tracker via `GhCliBackend`, **dry-run by default**, filing only under `--apply`; a new
-  **committed** ledger (`comment-finder.issues.toml`, `issues::ledger_file`) keyed on Tier-4
+  **committed** ledger (`commenter-cat.issues.toml`, `issues::ledger_file`) keyed on Tier-4
   identity gives cross-run/cross-machine idempotency (a marker filed by anyone is never
   re-filed). Verified e2e: suppression hides + never gates / audit reveals; export writes a
   merged idempotent `# noqa`; issues dry-run is offline and the ledger skips a pre-filed
@@ -592,7 +592,7 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
   absent tools, mocks); `ops::provider_cache` (project scope keys on the `cf_scope`
   universe tree-hash, file scope on the comment-language set; raw output cached,
   scope filter still runs after; `SUCCESS`/`EMPTY` only; best-effort → run on any
-  failure). Excluded `.comment-finder` from the universe walk so the cache cannot
+  failure). Excluded `.commenter-cat` from the universe walk so the cache cannot
   self-invalidate. `--no-cache` bypasses; `--stats` now reports cache hits vs runs.
   Verified e2e (2nd check on an unchanged tree: ruff + gitleaks from cache, gitleaks
   does not rescan; content change → re-run; `.env` secret cached + re-surfaced).
@@ -624,7 +624,7 @@ clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check` all pa
   runs `check`, derives each finding's Tier-2 identity (`bound_symbol`,
   `cosmetic_fingerprint`, `provider_rule_id`) via `current_identities`, then
   `accept` snapshots / `prune` drops-stale into the committed
-  `comment-finder.baseline.toml`. Verified on a fixture (accept → 4 identities
+  `commenter-cat.baseline.toml`. Verified on a fixture (accept → 4 identities
   written canonically; prune → 0 stale). `cf suppressions export` (mutates *source*
   + depends on a suppression pass `check` does not yet apply) and `cf issues sync`
   (network + `gh`, outward-facing) deliberately return explicit "wire deliberately"

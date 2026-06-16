@@ -50,7 +50,7 @@ impl HookEvent {
 /// gitignored cache so it is never committed.
 #[must_use]
 pub fn hooks_dir(repo_root: &Path) -> PathBuf {
-    repo_root.join(".comment-finder").join("hooks")
+    repo_root.join(".commenter-cat").join("hooks")
 }
 
 /// The shell script for a hook event — a non-fatal, changed-files-only warmer.

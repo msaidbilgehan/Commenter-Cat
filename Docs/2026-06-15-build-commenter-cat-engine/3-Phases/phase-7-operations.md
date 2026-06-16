@@ -40,12 +40,12 @@ tasks:
     notes: "Idea §5 Unified suppression: authoritative at our layer, one syntax for four tools. Suppressed = flagged not dropped (audit trail + unused-directive detection). cf:* classified kind=directive (never a finding target). Different subtree from 7.2/7.3 → parallel-safe."
   - id: "7.5"
     name: implement-baseline-file
-    action: "Create the committed baseline file comment-finder.baseline.toml (beside config, OUTSIDE the gitignored cache): sorted line-oriented entries (bound_symbol, cosmetic_fingerprint, rule) + optional reason/date, canonically ordered (lockfile-style), matched at Tier 2 (cosmetic, never fuzzy); implement `cf baseline accept` (snapshot current findings) and `cf baseline prune` (drop entries whose findings no longer occur)."
+    action: "Create the committed baseline file commenter-cat.baseline.toml (beside config, OUTSIDE the gitignored cache): sorted line-oriented entries (bound_symbol, cosmetic_fingerprint, rule) + optional reason/date, canonically ordered (lockfile-style), matched at Tier 2 (cosmetic, never fuzzy); implement `cf baseline accept` (snapshot current findings) and `cf baseline prune` (drop entries whose findings no longer occur)."
     files: [crates/cf-engine/src/ops/baseline/mod.rs, crates/cf-engine/src/ops/baseline/file_format.rs]
     depends_on: ["7.4"]
     parallel_safe: false
     validation: "cargo test -p cf-engine ops::baseline passes: accept snapshots findings deterministically, entries match at Tier 2, prune removes stale entries, and the file is canonically ordered"
-    notes: "Idea §5 Baseline file: committed shared truth, outside .comment-finder/. Tier-2 match (Phase 5) — never fuzzy. Records version+config_hash comparability (§5/§7). Inline directives + baseline are two inputs to ONE suppression pass (7.4)."
+    notes: "Idea §5 Baseline file: committed shared truth, outside .commenter-cat/. Tier-2 match (Phase 5) — never fuzzy. Records version+config_hash comparability (§5/§7). Inline directives + baseline are two inputs to ONE suppression pass (7.4)."
   - id: "7.6"
     name: implement-fix-and-tighten
     action: "Create `cf fix` / `cf tighten`: orchestrate provider autofixes by delegating to each tool's own --fix (ruff --fix, eslint --fix) where capabilities.supports_fix is true (CF never hand-applies a tool's edit), and route agent-authored comment edits through the parse-invariant applier; both deterministic + idempotent."
@@ -97,7 +97,7 @@ Wire the engine's verbs into working operations: the unified `cf check` (orchest
 - **Validation:** each scope + category target suppresses; unused directive reported.
 
 ### 7.5 — implement-baseline-file
-- **Action:** Committed `comment-finder.baseline.toml` (Tier-2 matched, canonically ordered) + `cf baseline accept`/`prune`.
+- **Action:** Committed `commenter-cat.baseline.toml` (Tier-2 matched, canonically ordered) + `cf baseline accept`/`prune`.
 - **Files:** `crates/cf-engine/src/ops/baseline/{mod.rs,file_format.rs}`
 - **Depends on:** 7.4
 - **Validation:** accept snapshots deterministically; Tier-2 match; prune removes stale; canonical order.

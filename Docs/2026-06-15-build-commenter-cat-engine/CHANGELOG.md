@@ -111,7 +111,7 @@ A post-dogfood checkpoint flagged two items; both are closed.
    complete and tested, but the verb returned a "not wired" placeholder. `run_baseline`
    now runs `check`, derives each finding's **Tier-2** identity (`bound_symbol`,
    `cosmetic_fingerprint`, `provider_rule_id`) via `current_identities`, and `accept`
-   snapshots / `prune` drops-stale into the committed `comment-finder.baseline.toml`
+   snapshots / `prune` drops-stale into the committed `commenter-cat.baseline.toml`
    (the diff anchor the CI path already consumes via `ci/diff.rs`; Idea §5). Verified
    end to end on a fixture: `accept` → 4 identities written in canonical (sorted,
    deduped) order; `prune` against the same findings → 0 stale. +1 regression test
@@ -182,7 +182,7 @@ caller**: `ops::check` always invoked every provider. Wired it in:
   output is cached; the existing scope filter still runs after. Only `SUCCESS`/
   `EMPTY` are cached; the cache is best-effort (any failure → run, never a wrong
   result).
-- **Cache-dir exclusion** — CF's own `.comment-finder` is now pruned from the
+- **Cache-dir exclusion** — CF's own `.commenter-cat` is now pruned from the
   universe walk (alongside `.git`); otherwise its mutating `inputs.db`/`index.db`
   would perturb the tree hash and self-invalidate the cache every run.
 - **CLI** — `check()` gained `use_cache`; `--no-cache` bypasses it; `--stats` now

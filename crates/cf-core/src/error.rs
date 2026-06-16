@@ -234,7 +234,7 @@ impl CfError {
     /// ```
     /// # use cf_core::error::CfError;
     /// let io = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
-    /// let err = CfError::config("reading comment-finder.toml").caused_by(io);
+    /// let err = CfError::config("reading commenter-cat.toml").caused_by(io);
     /// assert!(std::error::Error::source(&err).is_some());
     /// ```
     #[must_use]

@@ -1,7 +1,7 @@
 //! Layered TOML configuration (Idea §12).
 //!
 //! Configuration is assembled from four precedence layers — `CF_*` environment
-//! variables, a nearest-first walk-up of `comment-finder.toml` files, an XDG
+//! variables, a nearest-first walk-up of `commenter-cat.toml` files, an XDG
 //! global config, and built-in defaults — then collapsed into a single
 //! [`ResolvedConfig`] the engine consumes.
 //!

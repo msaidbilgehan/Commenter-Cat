@@ -117,7 +117,7 @@ pub(crate) enum Command {
         allow_significant: bool,
     },
 
-    /// Manage the committed baseline (`comment-finder.baseline.toml`).
+    /// Manage the committed baseline (`commenter-cat.baseline.toml`).
     Baseline {
         #[command(subcommand)]
         action: BaselineAction,

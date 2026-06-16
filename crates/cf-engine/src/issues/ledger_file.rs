@@ -1,6 +1,6 @@
 //! The committed issue-ledger file format (Idea §9).
 //!
-//! `comment-finder.issues.toml` is the idempotency ledger for comment-to-issue
+//! `commenter-cat.issues.toml` is the idempotency ledger for comment-to-issue
 //! filing — each comment's **Tier-4 identity token** mapped to the tracker issue
 //! it was filed against. It is **committed** beside the baseline, *not* in the
 //! gitignored cache: idempotency must be **shared truth** — a developer who files
@@ -17,7 +17,7 @@ use cf_core::error::{CfError, CfResult};
 use super::{IssueLedger, IssueRef};
 
 /// The committed ledger filename (beside the config, outside the cache).
-pub const LEDGER_FILENAME: &str = "comment-finder.issues.toml";
+pub const LEDGER_FILENAME: &str = "commenter-cat.issues.toml";
 
 /// The current ledger format version (migrated in place, Idea §11).
 pub const LEDGER_VERSION: u32 = 1;
