@@ -31,9 +31,9 @@ soundness as the only constraint, not effort or timing.
 ## 1. Purpose (the reframe)
 
 **The product is the live-session agent loop** (§4a). A coding agent — Claude Code and peers —
-reaches for `cf` mid-task to **find** comments across four languages → **understand** the code
+reaches for `commenter-cat` mid-task to **find** comments across four languages → **understand** the code
 each annotates → **rule-check** them under one normalized model → **update** them without
-breaking code, then re-check. `cf` is the tool; the agent is the driver; the loop is the
+breaking code, then re-check. `commenter-cat` is the tool; the agent is the driver; the loop is the
 deliverable. Every other section exists to make that loop fast (§6–§7), accurate (§5), and
 safe (§5 applier).
 
@@ -116,7 +116,7 @@ flowchart LR
 
 ### What this trades away (recorded so it isn't re-litigated)
 
-- **"Single binary, zero runtime"** — *dropped.* `cf` declares external provider
+- **"Single binary, zero runtime"** — *dropped.* `commenter-cat` declares external provider
   dependencies and degrades gracefully when one is absent (§5). Accuracy was chosen over
   self-containment.
 - Still **single-language for the substrate** (Rust): no Python skill layer, no
@@ -139,7 +139,7 @@ remains here is uniquely ours.
   `.gitignore` / `.ignore`; opt-out flag available. Plus a **generated-file heuristic**
   (header sniff) so minified/generated pseudo-comments don't pollute results.
 - **Comment kind classification (first-class):** `line` · `block` · `docstring` ·
-  `shebang` · `license` · `encoding-decl` · `directive` (`cf:*` control comments).
+  `shebang` · `license` · `encoding-decl` · `directive` (`commenter-cat:*` control comments).
   `shebang` + `license` are **default-suppressed**; `directive` comments are control-only,
   never finding targets (§5).
 - **Block coalescing:** adjacent line-comment nodes merge into one logical block before
@@ -217,7 +217,7 @@ The engine is the deterministic substrate a coding agent drives **in a live sess
 **MCP tools, 1:1 with CLI verbs**. This is the section everything else serves; the rest of the
 document is substrate that makes this loop fast, accurate, and safe.
 
-**The loop the agent runs.** It reaches for `cf` mid-task and stays in one cycle without
+**The loop the agent runs.** It reaches for `commenter-cat` mid-task and stays in one cycle without
 leaving its session — find → understand → judge → update → re-check:
 
 ```mermaid
@@ -264,7 +264,7 @@ enforced by the engine, never trusted to the agent (§5):
 
 1. **Parse-invariance** — after a comment-only edit, re-parse and assert the **code-node tree
    is byte-identical**; if any code node changed, **abort**.
-2. **Write-protection by kind** — `directive` (`cf:*`, `# noqa`, `// eslint-disable`,
+2. **Write-protection by kind** — `directive` (`commenter-cat:*`, `# noqa`, `// eslint-disable`,
    `# type: ignore`, `// @ts-expect-error`), `shebang`, and `encoding-decl` comments are
    **parse-invariant yet behavior-bearing** — read by the type-checker, the orchestrated
    linters, or the OS, not the grammar. They are **not freely rewritable**: an edit requires an
@@ -283,10 +283,10 @@ boundary.
 
 ## 5. Operations — orchestrate, normalize, fix, suppress
 
-The engine is a **conductor**, not an analyzer. `cf check` runs the providers, fuses their
+The engine is a **conductor**, not an analyzer. `commenter-cat check` runs the providers, fuses their
 output with native facts, and reports one unified result.
 
-### `cf check` — orchestrated linting
+### `commenter-cat check` — orchestrated linting
 
 1. **Run providers** (only on changed files; results cached, §6), each via a `RuleProvider`
    adapter.
@@ -322,7 +322,7 @@ comment rules, shellcheck shebang/directive, gitleaks), never a tool's full code
 Finding {
   origin            : ruff | eslint | shellcheck | gitleaks | native
   provider_rule_id  : origin-qualified, LOSSLESS  # "ruff:D417" — never discarded
-  canonical_rule_id : CF-vocabulary id            # "D417" (the adopted published id, §1)
+  canonical_rule_id : Commenter-Cat-vocabulary id            # "D417" (the adopted published id, §1)
   category          : cross-language concept       # coarse bucket (enum below)
   severity          : critical | error | warning | info     # canonical, resolved
   severity_native   : string?                      # the tool's original, kept for fidelity
@@ -335,7 +335,7 @@ Finding {
 ```
 
 **Rule identity is never lossy.** `provider_rule_id` (`ruff:D417`) is the origin-qualified
-original, always preserved; `canonical_rule_id` (`D417`) is that id adopted into CF's
+original, always preserved; `canonical_rule_id` (`D417`) is that id adopted into Commenter-Cat's
 vocabulary (§1); `category` is the coarse cross-language bucket — `doc_missing` · `doc_drift`
 · `doc_style` · `commented_code` · `secret` · `todo_format` · `marker_stale` ·
 `comment_style` · `shebang` · `directive` · `rot_candidate`. Filters, `explain`, and
@@ -373,7 +373,7 @@ system — 1-based vs 0-based, and **eslint reports UTF-16 columns** while tree-
 byte/char, so reconcile per adapter. Two findings of the same `category` overlapping one
 comment are **deduped**: highest severity kept, `origin`s unioned.
 
-### `cf fix` / `cf tighten`
+### `commenter-cat fix` / `commenter-cat tighten`
 
 - **Provider autofixes** orchestrated (`ruff --fix`, `eslint --fix`) — each tool owns its
   own edit safety.
@@ -382,9 +382,9 @@ comment are **deduped**: highest severity kept, `origin`s unioned.
   if a code node changed, **abort**. Deterministic + idempotent. This is what makes handing
   the write path to an external agent safe.
 - **Write-protection by kind** — parse-invariance proves the *parser* sees no change; it does
-  **not** prove behavior is unchanged. `directive` (`cf:*`, `# noqa`, `// eslint-disable`,
+  **not** prove behavior is unchanged. `directive` (`commenter-cat:*`, `# noqa`, `// eslint-disable`,
   `# type: ignore`, `// @ts-expect-error`), `shebang`, and `encoding-decl` comments are
-  behavior-bearing — read by the type-checker, the linters CF orchestrates, or the OS, not the
+  behavior-bearing — read by the type-checker, the linters Commenter-Cat orchestrates, or the OS, not the
   grammar. The applier **refuses** to rewrite these by default; an edit requires an explicit
   `allow_significant` acknowledgment. The guarantee is therefore *parse-invariant **and** not a
   behavior-bearing kind* — the `kind` taxonomy (§3) enforces it.
@@ -394,15 +394,15 @@ comment are **deduped**: highest severity kept, `origin`s unioned.
 Suppression is **authoritative at our normalization layer**, never written into source as
 native directives. We own the finding ranges, so we own the filter — one syntax, four tools.
 
-**Directive grammar** (ESLint-familiar; a `cf:*` comment is classified `kind = directive`
+**Directive grammar** (ESLint-familiar; a `commenter-cat:*` comment is classified `kind = directive`
 and is never itself a finding target):
 
 | Directive | Scope |
 |---|---|
-| `cf:disable-line=RULE[,RULE]` | the line the directive sits on |
-| `cf:disable-next-line=RULE` | the following line |
-| `cf:disable=RULE` … `cf:enable=RULE` | the region between them (unclosed → to EOF) |
-| `cf:disable-file=RULE` | the whole file |
+| `commenter-cat:disable-line=RULE[,RULE]` | the line the directive sits on |
+| `commenter-cat:disable-next-line=RULE` | the following line |
+| `commenter-cat:disable=RULE` … `commenter-cat:enable=RULE` | the region between them (unclosed → to EOF) |
+| `commenter-cat:disable-file=RULE` | the whole file |
 
 - **Target granularity is ours** (a dividend of filter-up): `RULE` may be a
   `provider_rule_id` (`ruff:D417` or bare `D417`), a **`category`** (`doc_drift`), an
@@ -413,22 +413,22 @@ and is never itself a finding target):
   the config, *shared truth* and therefore **outside** the gitignored `.commenter-cat/`
   cache. Sorted, line-oriented, one entry per suppressed identity
   `(bound_symbol, cosmetic_fingerprint, rule)` + optional reason/date, canonically ordered to
-  minimize merge conflicts (lockfile-style). `cf baseline accept` snapshots current findings;
-  `cf baseline prune` drops entries whose findings no longer occur (same unused signal).
+  minimize merge conflicts (lockfile-style). `commenter-cat baseline accept` snapshots current findings;
+  `commenter-cat baseline prune` drops entries whose findings no longer occur (same unused signal).
 
 **Suppressed findings are flagged, not dropped** — kept in the index with `suppressed_by`,
 excluded from default views, revealed by `--show-suppressed`. Two capabilities fall out free:
-an **audit trail**, and **unused-directive detection** (a `cf:disable=D417` on a line that no
+an **audit trail**, and **unused-directive detection** (a `commenter-cat:disable=D417` on a line that no
 longer produces D417 is reported — like ESLint's `--report-unused-disable-directives`).
 
-**Export mode (opt-in):** `cf suppressions export` materializes the suppression set into each
+**Export mode (opt-in):** `commenter-cat suppressions export` materializes the suppression set into each
 tool's native directives (`# noqa: D417`, `// eslint-disable-next-line`, `# shellcheck
 disable=…`) for teams that also run the tools directly — the one-way inverse of filter-up,
 written through the parse-invariant applier (§5). The default flow never touches source.
 
 ### RuleProvider invocation contract
 
-How `cf` drives a tool and turns its output into `Finding`s — one contract per adapter:
+How `commenter-cat` drives a tool and turns its output into `Finding`s — one contract per adapter:
 
 | Dimension | Contract |
 |---|---|
@@ -436,17 +436,17 @@ How `cf` drives a tool and turns its output into `Finding`s — one contract per
 | **I/O** | the tool's **JSON** mode only (`ruff --output-format json`, `eslint -f json`, `shellcheck -f json`, `gitleaks --report-format json`) — never text scraping |
 | **Scope** | per-provider `file` (cache per file, invoke on the changed subset) or `project` (TS type-aware rules; invoke whole tree, cache by tree hash) |
 | **Locations** | adapter maps tool coordinates → our byte offsets (**eslint = UTF-16 columns**; 1- vs 0-based) |
-| **Fixes** | `fix = provider_autofix` ⇒ delegate to the tool's own `--fix`; CF never hand-applies a tool's edit |
+| **Fixes** | `fix = provider_autofix` ⇒ delegate to the tool's own `--fix`; Commenter-Cat never hand-applies a tool's edit |
 | **Order** | findings sorted canonically `(file, line, col, provider_rule_id)` → stable baselines/diffs |
 
-**File discovery — two layers.** CF owns the *universe*; the provider keeps a *veto* within it:
+**File discovery — two layers.** Commenter-Cat owns the *universe*; the provider keeps a *veto* within it:
 
 ```
-effective_scope = provider_filter( cf_scope(repo) )
+effective_scope = provider_filter( commenter_cat_scope(repo) )
 ```
 
-`cf_scope` (the `[scan]` include/exclude) is authoritative — a provider **never** sees a file
-CF excluded. But CF **does not force** a provider to analyze a file its own config rejects (a
+`commenter_cat_scope` (the `[scan]` include/exclude) is authoritative — a provider **never** sees a file
+Commenter-Cat excluded. But Commenter-Cat **does not force** a provider to analyze a file its own config rejects (a
 local per-file ignore in `.ruff.toml` still applies), so tool-native exclusions teams already
 rely on keep working.
 
@@ -480,7 +480,7 @@ visible, not silent.
 
 ### Provider adapters — manifest-first (the platform decision)
 
-Whether CF is a **platform** or a fixed bundle of four analyzers turns on this: an extension
+Whether Commenter-Cat is a **platform** or a fixed bundle of four analyzers turns on this: an extension
 author must think *"how do I describe my tool?"*, not *"how do I contribute Rust?"*.
 
 **Terms.** A **provider** is an analyzer (the concept). **`RuleProvider`** is the Rust trait
@@ -524,8 +524,8 @@ coordinate_system    = "1-based-utf8"
 - **Mapping = declarative tables** (`severity_map`, `category_map`) bridging native values to
   the canonical `Finding` (§5) with **no embedded code**.
 - **`format = "sarif"`** uses a built-in generic mapper — any SARIF-emitting tool needs only
-  `command` + `[capabilities]`, no field-paths. (CF already *emits* SARIF, §8; now ingests.)
-- **Coordinates** are a *declared convention* (`1-based-utf8`, …); CF does the byte-offset
+  `command` + `[capabilities]`, no field-paths. (Commenter-Cat already *emits* SARIF, §8; now ingests.)
+- **Coordinates** are a *declared convention* (`1-based-utf8`, …); Commenter-Cat does the byte-offset
   conversion natively.
 - **Discovery:** bundled built-ins + project `.commenter-cat/providers/*.manifest.toml`;
   selected per language in `[providers]`.
@@ -535,7 +535,7 @@ tools needing *runtime* behavior, not just JSON shaping: the eslint Node-stack, 
 management, language servers, remote/AI-backed analyzers, non-JSON tools.
 
 **`[capabilities]` drives the orchestrator generically** — `file_scoped`/`project_scoped`
-(= the invocation `scope`), `supports_fix` (= whether `cf fix` delegates), `supports_incremental`,
+(= the invocation `scope`), `supports_fix` (= whether `commenter-cat fix` delegates), `supports_incremental`,
 `supports_sarif`. The orchestrator reasons from *declared* capabilities, not hardcoded per-tool
 knowledge — and capabilities are the single declarative source for the §5 invocation behavior.
 
@@ -554,7 +554,7 @@ parity with no privileged built-in behavior. (eslint is the documented exception
 Node-stack is Tier-2 native.)
 
 **Security:** a manifest declares a *command to spawn*, so installing a third-party manifest is
-a trust decision (like a git hook or editor extension). CF pins the provider binary by
+a trust decision (like a git hook or editor extension). Commenter-Cat pins the provider binary by
 version/hash (§5) so an approved adapter can't silently change what it runs.
 
 ### Provider management & reproducibility
@@ -571,28 +571,28 @@ The promise is **same source + same config ⇒ same findings**. A version skew (
   [providers.eslint]
   version = "10.3.0"   # the Node stack resolves to a locked dependency *tree*, not a scalar
   ```
-- `cf` fetches + caches pinned versions at `~/.cache/cf/providers/` (or project-local).
+- `commenter-cat` fetches + caches pinned versions at `~/.cache/commenter-cat/providers/` (or project-local).
   Single-binary tools (ruff, shellcheck, gitleaks) cache cleanly; the **eslint Node stack
   pins a full lockfile** (eslint + jsdoc/tsdoc plugins + transitive deps) — the hard case,
   owned by the invocation contract (above).
-- **`cf check` = pinned (default); `cf check --system-tools` = explicit escape hatch.**
+- **`commenter-cat check` = pinned (default); `commenter-cat check --system-tools` = explicit escape hatch.**
   "Use-installed" is never a first-class equal mode; the reproducible path is the default
   path. Baselines may only be updated under pinned tools.
 
-**Config authority — repo wins, CF layers (never overrides).**
+**Config authority — repo wins, Commenter-Cat layers (never overrides).**
 
 ```
-tool config  +  cf rule-selection  +  cf suppressions
+tool config  +  commenter-cat rule-selection  +  commenter-cat suppressions
 ```
 
 The repo's `.ruff.toml` / `.eslintrc` / `tsconfig` owns line length, target version, enabled
-rules, ignores, formatting; CF **consumes the resulting findings** and never rewrites a
+rules, ignores, formatting; Commenter-Cat **consumes the resulting findings** and never rewrites a
 tool's config (that would create two competing sources of truth).
 
-- **Boundary:** *external-linter* providers → **repo owns config**; *CF-native* providers
+- **Boundary:** *external-linter* providers → **repo owns config**; *Commenter-Cat-native* providers
   (blame-skew candidates, shell header/TODO, marker triage — anything with no repo-native
-  equivalent) → **CF owns config**. Any future opt-in LLM-style provider sits on the
-  CF-owns-config side **and at the provider edge** — never in the engine's default
+  equivalent) → **Commenter-Cat owns config**. Any future opt-in LLM-style provider sits on the
+  Commenter-Cat-owns-config side **and at the provider edge** — never in the engine's default
   deterministic flow (§2).
 
 **Config fingerprinting — the drift that bites hardest.** Findings lose comparability not
@@ -608,17 +608,17 @@ version     = "0.14.2"
 config_hash = "sha256:…"          # over the resolved effective config
 ```
 
-The full comparability key is **`(cf_ruleset_version, provider_version, config_hash)`** — a
-CF upgrade that changes which rules it ingests also changes findings.
+The full comparability key is **`(commenter_cat_ruleset_version, provider_version, config_hash)`** — a
+Commenter-Cat upgrade that changes which rules it ingests also changes findings.
 
-**`cf doctor`** validates version **and** config against the baseline:
+**`commenter-cat doctor`** validates version **and** config against the baseline:
 
 ```
 Ruff:    baseline 0.14.2 · cached 0.14.2 ✓ · config matches ✓
 ESLint:  baseline 10.3.0 · system 10.4.1 (ignored — using pinned) · config differs ⚠ findings may change
 ```
 
-`cf doctor --providers` for deeper per-provider diagnostics.
+`commenter-cat doctor --providers` for deeper per-provider diagnostics.
 
 ---
 
@@ -641,9 +641,9 @@ The cache splits along *cost to produce* — which is what makes **rebuild-over-
 - **`inputs.db` — content-addressed, expensive to produce, survives schema bumps.** Provider
   results keyed `(content_hash, provider, provider_version)` and embedding vectors keyed
   `(content_hash, model_version)`. This is the layer that costs real time — provider subprocesses
-  and ONNX inference — so it is keyed by *content*, never by CF's layout; a CF schema change never
+  and ONNX inference — so it is keyed by *content*, never by Commenter-Cat's layout; a Commenter-Cat schema change never
   invalidates it. Its own schema is deliberately minimal and rarely bumps.
-- **`index.db` — derived, cheap to rebuild, CF-schema-versioned.** The queryable layer:
+- **`index.db` — derived, cheap to rebuild, Commenter-Cat-schema-versioned.** The queryable layer:
   relational comment facts + mapping, the FTS5 index, the `sqlite-vec` `vec0` index, and the
   identity / suppression tables. Built by the deterministic native pass reading from `inputs.db` —
   re-inserting precomputed provider JSON and vectors into fresh structures, with no re-run and no
@@ -689,7 +689,7 @@ nothing.
 Two regimes, because steady state ≠ cold start:
 
 - **Warm / incremental** (the path users feel): the hook warms the cache on changed files
-  only, so a local `cf check` or `query` answers from the index in **interactive time**
+  only, so a local `commenter-cat check` or `query` answers from the index in **interactive time**
   (target < ~100 ms), and a hook on a typical commit (a few dozen changed files) finishes
   **sub-second**, non-blocking (§7).
 - **Cold** (first scan / CI miss): bounded by the slowest provider over the full file set.
@@ -706,7 +706,7 @@ pool (peak ≈ workers × largest-file AST); the index spills to disk (SQLite), 
 RAM. Provider subprocesses run under a bounded pool (≈ CPU count) with per-provider timeout.
 
 No hard MB/s number is committed pre-implementation — the **budget is the _shape_** (warm =
-interactive, cold = provider-bound + parallel, memory = O(workers)); `cf check --stats`
+interactive, cold = provider-bound + parallel, memory = O(workers)); `commenter-cat check --stats`
 reports the per-stage breakdown so regressions are visible.
 
 ---
@@ -718,7 +718,7 @@ reports the per-stage breakdown so regressions are visible.
 - **Cover the events that change comments:** `post-commit`, `post-checkout`, `post-merge`,
   `post-rewrite`.
 - **Distribute via `core.hooksPath`** or a manager (lefthook / pre-commit), installed by
-  `cf install-hooks`. Never hand-edit `.git/hooks/`.
+  `commenter-cat install-hooks`. Never hand-edit `.git/hooks/`.
 - **Fast + non-fatal.** Scan only the commit's changed files (`git diff-tree`); run the
   providers only on those; never block the developer.
 - **Team freshness ≠ local freshness.** Local hook = fast personal feedback. **Shared truth
@@ -730,10 +730,10 @@ reports the per-stage breakdown so regressions are visible.
 CI runs the cold/full path but caches it the way the hook caches the warm path:
 
 - **Restore — two artifacts, two keys** (§6 two-layer cache). `inputs.db` is keyed on
-  `(provider_versions + config_hashes + inputs_schema_version)` — *not* the CF binary version —
-  so a CF upgrade that only bumps the index layout still **reuses the expensive provider results
+  `(provider_versions + config_hashes + inputs_schema_version)` — *not* the Commenter-Cat binary version —
+  so a Commenter-Cat upgrade that only bumps the index layout still **reuses the expensive provider results
   and embeddings**, never re-running eslint over the whole tree. `index.db` is keyed on the full
-  comparability key `(tree_hash + cf_ruleset_version + provider_versions + config_hashes)` (the
+  comparability key `(tree_hash + commenter_cat_ruleset_version + provider_versions + config_hashes)` (the
   baseline's key, §5); on a miss it is **re-derived from the restored `inputs.db`**, not
   cold-scanned. A `tree_hash` hit means only changed files need provider runs.
 - **Diff vs. the committed baseline** — fail on findings at or above `fail_on` that aren't
@@ -782,7 +782,7 @@ never depends on it — its main use is pipeline / CI. In scope (§0), positione
 auth / `GITHUB_TOKEN`, or a Jira/GitLab token from env or a secrets manager — **never stored
 in config or the index**. Creation is **idempotent**: the filed `issue_url` is stored against
 the comment's Tier-4 identity (§4), so re-runs and minor rewordings never double-file.
-**Back-sync is opt-in** (`cf issues sync`) and bidirectional — a closed issue offers to
+**Back-sync is opt-in** (`commenter-cat issues sync`) and bidirectional — a closed issue offers to
 resolve its marker, a removed marker offers to close its issue — and because resolving a
 marker mutates source, it routes through the parse-invariant applier (§5), never silently.
 Trackers are pluggable (GitHub `octocrab`, Jira, GitLab) behind a small issue-backend
@@ -819,7 +819,7 @@ and the JSONPath lib are the recommended defaults, finalized in planning.
 
 ### Distribution & install
 
-- **Primary channel: `cargo`.** `cargo install commenter-cat` → the `cf` binary. Published to
+- **Primary channel: `cargo`.** `cargo install commenter-cat` → the `commenter-cat` binary. Published to
   crates.io; `Cargo.lock` committed for a reproducible build.
 - **Prebuilt binaries** via `cargo-dist` + GitHub Releases, installable with
   `cargo binstall commenter-cat`, so non-Rust users skip compilation. Each release carries the
@@ -841,21 +841,21 @@ and the JSONPath lib are the recommended defaults, finalized in planning.
   handled in the native pass and explicitly tested (§11); `x86_64-pc-windows-msvc` is the
   supported toolchain.
 - **Not bundled:** external provider binaries (ruff, shellcheck, gitleaks, eslint + Node) —
-  fetched + cached per §5, pinned by version/hash. Installing `cf` installs the engine; providers
+  fetched + cached per §5, pinned by version/hash. Installing `commenter-cat` installs the engine; providers
   arrive on first `check`.
 
 ### Security & trust model
 
-Consolidated from §§5–9 — CF is **local-first**; nothing leaves the machine except two opt-in
+Consolidated from §§5–9 — Commenter-Cat is **local-first**; nothing leaves the machine except two opt-in
 egress paths.
 
 | Surface | Stance |
 |---|---|
-| **Secrets** | gitleaks finds secrets-in-comments (§5); CF never *stores* them. Issue-tracker auth uses host credentials (`gh` / env / secrets-manager), **never** config or index (§9). |
+| **Secrets** | gitleaks finds secrets-in-comments (§5); Commenter-Cat never *stores* them. Issue-tracker auth uses host credentials (`gh` / env / secrets-manager), **never** config or index (§9). |
 | **Embeddings** | computed locally (ONNX); comments — proprietary context — are **never** shipped to an embedding API (§6). |
 | **Manifests** | a manifest declares a *command to spawn*, so installing a third-party one is a trust decision (like a git hook). **No arbitrary code** in manifests (§5); the provider binary is pinned by version/hash so an approved adapter can't silently change what it runs. |
-| **Provider subprocesses** | bounded pool + per-provider timeout; CF owns the file universe (`cf_scope`), a provider may only *veto* within it, never widen it (§5). |
-| **Write path** | `apply_edit` / `remove` only — comment-only, under parse-invariance + write-protection-by-kind (§4a). CF never performs arbitrary file writes on an agent's behalf. |
+| **Provider subprocesses** | bounded pool + per-provider timeout; Commenter-Cat owns the file universe (`commenter_cat_scope`), a provider may only *veto* within it, never widen it (§5). |
+| **Write path** | `apply_edit` / `remove` only — comment-only, under parse-invariance + write-protection-by-kind (§4a). Commenter-Cat never performs arbitrary file writes on an agent's behalf. |
 | **Supply chain** | committed `Cargo.lock`; pinned provider versions + hashes; the Node stack pins a full lockfile (§5). |
 | **Egress (opt-in only)** | `comment-to-issue` (host creds) and CI SARIF upload (§8). The default local flow has zero network egress. |
 
@@ -873,7 +873,7 @@ run, not a code change.
 |---|---|---|
 | **Provider adapters** | ruff/eslint/shellcheck/gitleaks change rule IDs, JSON shape, severity scales each release | manifests are declarative TOML (§5); `provider_rule_id` lossless; **contract tests** (below) catch shape breaks; eslint Node-stack is the lone Tier-2 burden |
 | **tree-sitter grammars** | grammar updates, new language syntax | pinned grammar versions; **golden-file tests** catch extraction/mapping regressions before a bump |
-| **Canonical vocabulary** (`cf_ruleset_version`) | new rules/providers mapped to canonical ids / categories | versioned; part of the comparability key (§5); `cf doctor` surfaces drift |
+| **Canonical vocabulary** (`commenter_cat_ruleset_version`) | new rules/providers mapped to canonical ids / categories | versioned; part of the comparability key (§5); `commenter-cat doctor` surfaces drift |
 | **Native artifacts** (sqlite-vec · ONNX runtime + model) | per-platform builds, model refresh, SQLite-version match | version-matched per target (§10); embeddings keyed by `content_hash` + model version → controlled, not blanket, re-embed |
 | **Bundled SQLite** | security / feature updates | WAL + **cache-rebuild on `schema_version` mismatch** absorbs it (the DB is a cache, §6) |
 
@@ -882,17 +882,17 @@ matrix** — is concentrated by design so the other ~80–90% stays declarative.
 
 ### Versioning, schema migration & breaking-change policy
 
-CF has **several independently-versioned contracts**; conflating them is the trap. Each is
-versioned and evolved on its own rule. CF ships at **1.0.0** — no 0.x / beta, per §0.
+Commenter-Cat has **several independently-versioned contracts**; conflating them is the trap. Each is
+versioned and evolved on its own rule. Commenter-Cat ships at **1.0.0** — no 0.x / beta, per §0.
 
 | Contract | Versioned by | Compatibility rule |
 |---|---|---|
-| **`cf` binary** | SemVer 2.0 (1.0+) | MAJOR = a breaking change to any *stable* contract below |
+| **`commenter-cat` binary** | SemVer 2.0 (1.0+) | MAJOR = a breaking change to any *stable* contract below |
 | **MCP verbs + CLI** (the product, §4a) | product SemVer + per-verb **stability tier** (`stable` / `experimental`) | additive (new optional arg / new verb) = MINOR; removing or reshaping a *stable* verb's return = MAJOR; new capability lands `experimental` first. Agents pin a MAJOR. |
 | **JSONL `schema_version`** | integer | output contract; reader supports current + N−1; forward-only |
 | **SQLite cache** — `index` + `inputs` layer versions (§6) | integer each | `index.db` **rebuilt** from `inputs.db` on an index bump; `inputs.db` versioned separately, rarely bumps; **rebuild, never migrate** |
-| **`cf_ruleset_version`** | integer | bump = a *findings-comparability* event (re-baseline), surfaced by `cf doctor` — **not** a binary-breaking change |
-| **`manifest_version`** | integer (now `1`) | CF reads current + prior manifest major, so third-party adapters survive a CF upgrade |
+| **`commenter_cat_ruleset_version`** | integer | bump = a *findings-comparability* event (re-baseline), surfaced by `commenter-cat doctor` — **not** a binary-breaking change |
+| **`manifest_version`** | integer (now `1`) | Commenter-Cat reads current + prior manifest major, so third-party adapters survive a Commenter-Cat upgrade |
 | **config `version`** | integer (now `1`) | unknown future version = hard error with guidance; deprecations warned ≥ 1 MINOR before removal |
 
 **Schema migration — rebuild over migrate**, leveraging the cache decision (§6):
@@ -903,16 +903,16 @@ versioned and evolved on its own rule. CF ships at **1.0.0** — no 0.x / beta, 
   index bumps, so providers never re-run and the repo is never re-embedded. Only a rare `inputs.db`
   schema bump forces a true cold rebuild — no fragile in-place migrations either way.
 - **Baseline file** (committed, shared truth, §5): cannot be rebuilt — it migrates in place.
-  `cf baseline migrate` upgrades the format; the format version is recorded in the file; CF reads
+  `commenter-cat baseline migrate` upgrades the format; the format version is recorded in the file; Commenter-Cat reads
   current + N−1.
 - **JSONL:** `schema_version`-tagged with a documented per-version changelog; forward-only.
 
 **Breaking-change discipline:**
 
-- A **≥ 1 MINOR deprecation window** with `cf doctor` + runtime warnings precedes any removal in
+- A **≥ 1 MINOR deprecation window** with `commenter-cat doctor` + runtime warnings precedes any removal in
   the next MAJOR.
-- **Provider version bumps are never CF breaking changes** — they're comparability events handled
-  by the key + `doctor` + baseline (§5). Upgrading ruff bumps `provider_version`, not CF's MAJOR.
+- **Provider version bumps are never Commenter-Cat breaking changes** — they're comparability events handled
+  by the key + `doctor` + baseline (§5). Upgrading ruff bumps `provider_version`, not Commenter-Cat's MAJOR.
 - Every release ships a changelog **per-contract** (binary · MCP · schema · ruleset · manifest).
 
 ### Testing & validation strategy
@@ -927,10 +927,10 @@ are **property-tested**, not example-tested.
 | **Golden-file / snapshot** | `insta` | per-grammar extraction + mapping (`bound_symbol`, kind, ranges); per-provider JSON → `Finding[]` (recorded fixtures, version-decoupled) |
 | **Property-based** | `proptest` | **the load-bearing ones:** parse-invariance over arbitrary comment edits; `apply_edit` idempotence; identity stability (cosmetic edit preserves Tier-2, marker escalation breaks it); findings-ordering determinism |
 | **Provider contract** | shared harness | every adapter (manifest + native, incl. dogfooded built-ins) honors the §5 contract: JSON-only, coordinate mapping, run-state `SUCCESS/EMPTY/PARTIAL/SKIPPED`, failure ≠ zero |
-| **Integration** | fixture repos, pinned providers | end-to-end `cf check`: unified findings, suppression, baseline; the **graceful-degradation path** (provider absent → `SKIPPED`) explicitly tested |
-| **Reproducibility** | CI | identical `(tree_hash, cf_ruleset_version, provider_version, config_hash)` → byte-identical report across two runs **and across the OS matrix** |
+| **Integration** | fixture repos, pinned providers | end-to-end `commenter-cat check`: unified findings, suppression, baseline; the **graceful-degradation path** (provider absent → `SKIPPED`) explicitly tested |
+| **Reproducibility** | CI | identical `(tree_hash, commenter_cat_ruleset_version, provider_version, config_hash)` → byte-identical report across two runs **and across the OS matrix** |
 | **MCP surface** | agent-contract tests | token budget honored (`limit` / `cursor` / `truncated`); round-trip (`apply_edit` returns re-checked findings); write-protection-by-kind refusal |
-| **Performance regression** | `criterion` + `cf check --stats` | per-stage budget *shape* (§6) asserted in CI; native hot-path benches |
+| **Performance regression** | `criterion` + `commenter-cat check --stats` | per-stage budget *shape* (§6) asserted in CI; native hot-path benches |
 
 **Principles:** mock only at seams (network → issue trackers, the clock) — **never** the parser or
 the DB; test against real tree-sitter and real SQLite (real systems tell the truth). CI runs the
@@ -944,29 +944,29 @@ CRLF, and native artifacts are platform-sensitive.
 | Decision | Resolution |
 |---|---|
 | **Build principle** | Full implementation, no phasing (§0). |
-| **Product focus** | **The live-session agent loop** (§4a) is the center of gravity — a coding agent reaching for `cf` mid-task to *find · understand · rule-check · safely-update* comments. The agent surface is the product; the substrate (§3, §5–§7) serves it; pipeline features (`comment-to-issue`, native-directive export, CI diffing) are **adjacent**, never on the loop's critical path. |
+| **Product focus** | **The live-session agent loop** (§4a) is the center of gravity — a coding agent reaching for `commenter-cat` mid-task to *find · understand · rule-check · safely-update* comments. The agent surface is the product; the substrate (§3, §5–§7) serves it; pipeline features (`comment-to-issue`, native-directive export, CI diffing) are **adjacent**, never on the loop's critical path. |
 | **Architecture** | **Rust orchestrator**, not a single self-contained binary. Owns the substrate (extract/map/enrich/normalize/index/search/surface); **delegates rule content** to external providers (§2). |
 | **Rule content** | **Delegated to best-in-class tools** — ruff / eslint+jsdoc+tsdoc / shellcheck / gitleaks — via swappable `RuleProvider` adapters with graceful degradation (§5). No reimplementation. |
 | **Accuracy vs. setup** | **Max-accuracy wins**; external dependencies accepted. No zero-setup constraint (§2). |
-| **Reproducibility** | Providers **pinned + auto-managed** (default; `--system-tools` escape hatch), cached locally. Repo tool-config authoritative — CF layers selection + suppression, never overrides. Baseline records **version + resolved-config fingerprint**; comparability key `(cf_ruleset_version, provider_version, config_hash)`; `cf doctor` validates both (§5). |
-| **Invocation** | Subprocess per provider, batched + parallel, JSON-only; **two-layer discovery** `provider_filter(cf_scope)`; run-state **SUCCESS/EMPTY/PARTIAL/SKIPPED** (failure ≠ zero findings, degraded-diff); Node **semi-hermetic default / `--hermetic`**; lossless `provider_rule_id` beside `canonical_rule_id`; `reproducibility_level` in run metadata (§5). |
-| **Extensibility** | **Manifest-first** — declarative TOML (RFC 9535 JSONPath extraction + `severity_map`/`category_map` + `[capabilities]`, **no code**) covers ~80–90%; compiled Rust `RuleProvider` is the escape hatch. Built-ins **dogfood** manifests; SARIF ingested generically. Makes CF a platform, not a fixed bundle (§5). |
+| **Reproducibility** | Providers **pinned + auto-managed** (default; `--system-tools` escape hatch), cached locally. Repo tool-config authoritative — Commenter-Cat layers selection + suppression, never overrides. Baseline records **version + resolved-config fingerprint**; comparability key `(commenter_cat_ruleset_version, provider_version, config_hash)`; `commenter-cat doctor` validates both (§5). |
+| **Invocation** | Subprocess per provider, batched + parallel, JSON-only; **two-layer discovery** `provider_filter(commenter_cat_scope)`; run-state **SUCCESS/EMPTY/PARTIAL/SKIPPED** (failure ≠ zero findings, degraded-diff); Node **semi-hermetic default / `--hermetic`**; lossless `provider_rule_id` beside `canonical_rule_id`; `reproducibility_level` in run metadata (§5). |
+| **Extensibility** | **Manifest-first** — declarative TOML (RFC 9535 JSONPath extraction + `severity_map`/`category_map` + `[capabilities]`, **no code**) covers ~80–90%; compiled Rust `RuleProvider` is the escape hatch. Built-ins **dogfood** manifests; SARIF ingested generically. Makes Commenter-Cat a platform, not a fixed bundle (§5). |
 | **LLM** | **None in the engine flow.** Substrate for an external agent (§4a). |
 | **Rot** | Deterministic drift **delegated** (`D417` / `check-param-names`), unified + mapped by us; semantic rot is the agent's via the primitives (§1, §3, §9). |
-| **Lint + fix** | `check` = orchestrate providers + native unification; `fix` = provider autofixes + native parse-invariant applier; **one** `cf:disable` across all tools (§5). |
+| **Lint + fix** | `check` = orchestrate providers + native unification; `fix` = provider autofixes + native parse-invariant applier; **one** `commenter-cat:disable` across all tools (§5). |
 | **Findings** | Every provider mapped to one canonical `Finding`; severity is canonical 4-level (critical/error/warning/info), **`category`-anchored** for cross-language consistency, per-tool table as fallback (§5). |
-| **Suppression** | Authoritative **filter-up** at the normalization layer — never native directives in source. Inline `cf:disable[-line/-next-line/-file]` + region + baseline; suppressed findings **flagged** (audit + unused-directive detection); opt-in export to native (§5). |
+| **Suppression** | Authoritative **filter-up** at the normalization layer — never native directives in source. Inline `commenter-cat:disable[-line/-next-line/-file]` + region + baseline; suppressed findings **flagged** (audit + unused-directive detection); opt-in export to native (§5). |
 | **Mapping** | No heuristic: doc by language standard (PEP 257 / JSDoc adjacency), non-doc by line geometry; blank-line adjacency residual (§3). |
 | **Identity** | Composite `(bound_symbol, kind, cosmetic_fingerprint)`; tiered match — cosmetic/precise for suppression, fuzzy opt-in for issue/blame (§4). |
-| **Config** | TOML, walk-up + hierarchical cascade, `CF_*` env, XDG global, versioned/validated. |
+| **Config** | TOML, walk-up + hierarchical cascade, `COMMENTER_CAT_*` env, XDG global, versioned/validated. |
 | **sqlite-vec** | Core. Hybrid FTS5 + vector; engine-local ONNX embeddings. **Two-layer cache** — content-addressed `inputs.db` (survives) + derived `index.db` (rebuilt, never migrated) (§6, §11). |
-| **Name** | **Commenter-Cat** — the short `cf` handle is kept everywhere it is terse and load-bearing: the `cf` binary, the "CF" abbrev, the `cf:` directive, and `CF_*` env (renaming those ~20 usages buys nothing). The long-form alias and on-disk names align with the brand: **`commenter-cat`** long-form, `.commenter-cat/` cache dir, and `commenter-cat.toml` / `.baseline.toml` / `.issues.toml`. `cf` collides with Cloud Foundry's CLI, so `commenter-cat` is the unambiguous long-form. |
-| **Performance** | Two regimes — warm/incremental interactive (provider-result cache the lever), cold provider-bound + rayon-parallel; memory O(workers), not repo size; `cf check --stats` per-stage (§6). |
-| **CI** | Restore two artifacts — `inputs.db` (provider/config-keyed, reused across CF upgrades) + `index.db` (full comparability key, re-derived on miss); incremental on hit; publish SARIF + report + new cache; diff vs. committed baseline; `PARTIAL` ⇒ degraded verdict (§7). |
+| **Name** | **Commenter-Cat** everywhere — one name, no abbreviation. Binary `commenter-cat`; crates `commenter-cat-core` / `-engine` / `-cli`; types `CommenterCat*`; and config/env/directive/cache all read it in full (`commenter-cat.toml`, `COMMENTER_CAT_*`, `commenter-cat:`, `.commenter-cat/`). The earlier `cf` short handle was **retired**: it abbreviated the original working name *comment-finder* — never Commenter-Cat — and `cf` also collided with Cloud Foundry's CLI. A shorter command alias may be added later, but it will derive from Commenter-Cat (e.g. `ccat`), never `cf`. |
+| **Performance** | Two regimes — warm/incremental interactive (provider-result cache the lever), cold provider-bound + rayon-parallel; memory O(workers), not repo size; `commenter-cat check --stats` per-stage (§6). |
+| **CI** | Restore two artifacts — `inputs.db` (provider/config-keyed, reused across Commenter-Cat upgrades) + `index.db` (full comparability key, re-derived on miss); incremental on hit; publish SARIF + report + new cache; diff vs. committed baseline; `PARTIAL` ⇒ degraded verdict (§7). |
 | **Tech stack** | Native-Rust hot path — tree-sitter · `ignore` · rayon · rusqlite (FTS5 + sqlite-vec) · ONNX; agent surface via `rmcp`, git via `gix`, CLI via `clap`. Full table §10. |
 | **Distribution** | **`cargo`** — `cargo install` (crates.io) + prebuilt binaries (`cargo-dist` / `binstall`); per-platform sqlite-vec + ONNX artifacts bundled, version-matched (§10). |
 | **Platforms** | **Linux · macOS · Windows** (x86_64 + aarch64; Windows x86_64). CRLF + the native-artifact matrix explicitly tested (§10–§11). |
-| **Versioning** | SemVer **1.0+** (no 0.x); **independently-versioned contracts** (binary · MCP stability tiers · `schema_version` · `cf_ruleset_version` · `manifest_version`); **cache rebuilds, never migrates**; provider bumps ≠ CF breaks (§11). |
+| **Versioning** | SemVer **1.0+** (no 0.x); **independently-versioned contracts** (binary · MCP stability tiers · `schema_version` · `commenter_cat_ruleset_version` · `manifest_version`); **cache rebuilds, never migrates**; provider bumps ≠ Commenter-Cat breaks (§11). |
 | **Maintenance** | Manifest-first turns most provider upkeep into declarative TOML + contract tests; residual hard surface = eslint Node stack + per-platform artifacts (§11). |
 | **Testing** | Layered — unit + `insta` golden-files + `proptest` (parse-invariance, determinism) + adapter contract + integration + reproducibility + MCP-surface + perf; OS-matrix CI (§11). |
 
@@ -1013,7 +1013,7 @@ default_format = "terminal"         # terminal | jsonl | sarif | markdown | csv
 | Option | Verdict | Why |
 |---|---|---|
 | **Reimplement per-language linters natively** | Rejected | ruff/eslint/shellcheck/gitleaks are mature, precise, maintained. A native clone lags upstream and duplicates a source of truth. "Don't discover America from scratch." |
-| **Compiled-Rust adapters as the primary extension path** | Rejected | Per-integration friction (clone → rust → compile → distribute). Manifest-first makes CF a platform; Rust is reserved for runtime-complex providers (§5). |
+| **Compiled-Rust adapters as the primary extension path** | Rejected | Per-integration friction (clone → rust → compile → distribute). Manifest-first makes Commenter-Cat a platform; Rust is reserved for runtime-complex providers (§5). |
 | **Arbitrary code inside manifests** | Rejected | Embedded scripting destroys reproducibility, security, caching, portability. A code-level need crosses the threshold to a native provider (§5). |
 | **Local LLM in the engine flow** | Rejected | The engine is a deterministic substrate; the LLM lives in the consuming agent. |
 | **Python skill layer** | Rejected | Its sole justification was LLM dev-loop churn; gone. Substrate is Rust-native. |
@@ -1047,7 +1047,7 @@ decided in code rather than design:
 - The concrete RFC 9535 JSONPath library + the SARIF→`Finding` mapping table.
 - Default `limit` / ranking weights and the `context` token budget for the agent surface
   (§4a) — tuned against real agent sessions.
-- Tuned throughput / memory numbers once the native pass is benchmarked (`cf check --stats`
+- Tuned throughput / memory numbers once the native pass is benchmarked (`commenter-cat check --stats`
   is the instrument).
 - Per-tracker API field mappings for `comment-to-issue` (GitHub / Jira / GitLab).
 

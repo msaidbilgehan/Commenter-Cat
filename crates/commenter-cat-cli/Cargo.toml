@@ -1,0 +1,24 @@
+[package]
+name = "commenter-cat-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Commenter-Cat CLI — the `commenter-cat` binary."
+
+[[bin]]
+name = "commenter-cat"
+path = "src/main.rs"
+
+[dependencies]
+commenter-cat-engine.workspace = true
+commenter-cat-core.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

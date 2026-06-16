@@ -82,7 +82,7 @@ graph TD
   T6_6 --> T6_7
 
   %% Phase 7 — Operations (after P5 + P6)
-  T5_3 --> T7_1[7.1 cf check]
+  T5_3 --> T7_1[7.1 commenter-cat check]
   T6_7 --> T7_1
   T7_1 --> T7_2[7.2 parse-invariant apply]
   T7_2 --> T7_3[7.3 write-protection]
@@ -129,7 +129,7 @@ The longest dependency chain (28 tasks) threads the deepest serial work across e
 Front-loaded, wide-and-shallow where possible (see frontmatter `parallel_groups`):
 
 - **After 1.1:** 1.2 and 1.3 run together (error hierarchy vs. version constants — different files).
-- **After Phase 1:** **Phase 2 (native substrate) and Phase 3 (finding model) run fully in parallel** — the largest parallelization win; one lives in `cf-engine`, the other in `cf-core`.
+- **After Phase 1:** **Phase 2 (native substrate) and Phase 3 (finding model) run fully in parallel** — the largest parallelization win; one lives in `commenter-cat-engine`, the other in `commenter-cat-core`.
 - **Within Phase 2:** after 2.2, the marker extractor (2.5) runs alongside the coalesce→map chain (2.3→2.4).
 - **Within Phase 4:** after 4.1, the index schema (4.2), content-hash cache (4.3), and embeddings (4.5) proceed in parallel before converging at 4.6/4.7.
 - **After Phase 4:** **Phase 5 (identity) and Phase 6 (providers) run in parallel.**

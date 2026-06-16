@@ -2,7 +2,7 @@
 #
 # Source of truth is `dist-workspace.toml`; `dist generate` keeps this file in
 # sync. The matrix below mirrors that config: if ANY target fails to build, the
-# release fails (never ship a partial matrix). The `cf` binary statically links
+# release fails (never ship a partial matrix). The `commenter-cat` binary statically links
 # sqlite-vec (no side artifact) and fetches the ONNX model on first use, so each
 # job's artifact is the self-contained binary + its checksum.
 name: Release
@@ -51,25 +51,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
       - uses: Swatinem/rust-cache@v2
-      - name: Build cf
-        run: cargo build --release -p cf-cli --target ${{ matrix.target }}
+      - name: Build commenter-cat
+        run: cargo build --release -p commenter-cat-cli --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
           set -euo pipefail
-          bin="cf"; ext=""
+          bin="commenter-cat"; ext=""
           [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           src="target/${{ matrix.target }}/release/${bin}${ext}"
           # A missing binary for this target fails the release (never degrade).
           test -f "$src" || { echo "::error::missing build artifact for ${{ matrix.target }}"; exit 1; }
-          pkg="cf-${{ matrix.target }}"
+          pkg="commenter-cat-${{ matrix.target }}"
           mkdir -p "dist/$pkg"
           cp "$src" "dist/$pkg/"
           ( cd dist && tar czf "${pkg}.tar.gz" "$pkg" && sha256sum "${pkg}.tar.gz" > "${pkg}.tar.gz.sha256" )
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cf-${{ matrix.target }}
+          name: commenter-cat-${{ matrix.target }}
           path: dist/*.tar.gz*
           if-no-files-found: error
 

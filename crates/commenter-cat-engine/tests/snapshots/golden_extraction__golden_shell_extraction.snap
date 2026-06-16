@@ -1,0 +1,33 @@
+---
+source: crates/commenter-cat-engine/tests/golden_extraction.rs
+expression: "extract_and_map(source, Language::Shell, \"m.sh\")"
+---
+[
+    GoldenComment {
+        kind: "shebang",
+        bound_symbol: Some(
+            "<module>",
+        ),
+        start_line: 1,
+        end_line: 1,
+        text: "#!/bin/sh",
+    },
+    GoldenComment {
+        kind: "line",
+        bound_symbol: Some(
+            "<module>",
+        ),
+        start_line: 2,
+        end_line: 2,
+        text: "# configure the run",
+    },
+    GoldenComment {
+        kind: "line",
+        bound_symbol: Some(
+            "<module>",
+        ),
+        start_line: 5,
+        end_line: 5,
+        text: "# greet the user",
+    },
+]

@@ -1,0 +1,33 @@
+---
+source: crates/commenter-cat-engine/tests/golden_extraction.rs
+expression: "extract_and_map(source, Language::JavaScript, \"m.js\")"
+---
+[
+    GoldenComment {
+        kind: "line",
+        bound_symbol: Some(
+            "add",
+        ),
+        start_line: 1,
+        end_line: 1,
+        text: "// top-level note",
+    },
+    GoldenComment {
+        kind: "line",
+        bound_symbol: Some(
+            "add",
+        ),
+        start_line: 3,
+        end_line: 3,
+        text: "// adds two numbers",
+    },
+    GoldenComment {
+        kind: "block",
+        bound_symbol: Some(
+            "x",
+        ),
+        start_line: 7,
+        end_line: 8,
+        text: "/* block comment\n   spanning lines */",
+    },
+]

@@ -386,57 +386,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-cli"
-version = "1.0.0"
-dependencies = [
- "cf-core",
- "cf-engine",
- "clap",
- "tempfile",
-]
-
-[[package]]
-name = "cf-core"
-version = "1.0.0"
-dependencies = [
- "proptest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "toml",
-]
-
-[[package]]
-name = "cf-engine"
-version = "1.0.0"
-dependencies = [
- "cf-core",
- "criterion",
- "fastembed",
- "gix",
- "ignore",
- "insta",
- "proptest",
- "rayon",
- "rmcp",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_json_path",
- "sha2",
- "sqlite-vec",
- "tempfile",
- "tokio",
- "toml",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-typescript",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -541,6 +490,57 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "commenter-cat-cli"
+version = "1.0.0"
+dependencies = [
+ "clap",
+ "commenter-cat-core",
+ "commenter-cat-engine",
+ "tempfile",
+]
+
+[[package]]
+name = "commenter-cat-core"
+version = "1.0.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "commenter-cat-engine"
+version = "1.0.0"
+dependencies = [
+ "commenter-cat-core",
+ "criterion",
+ "fastembed",
+ "gix",
+ "ignore",
+ "insta",
+ "proptest",
+ "rayon",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_json_path",
+ "sha2",
+ "sqlite-vec",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-typescript",
+]
 
 [[package]]
 name = "compact_str"

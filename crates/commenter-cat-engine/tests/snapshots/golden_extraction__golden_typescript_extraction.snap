@@ -1,0 +1,24 @@
+---
+source: crates/commenter-cat-engine/tests/golden_extraction.rs
+expression: "extract_and_map(source, Language::TypeScript, \"m.ts\")"
+---
+[
+    GoldenComment {
+        kind: "docstring",
+        bound_symbol: Some(
+            "greet",
+        ),
+        start_line: 1,
+        end_line: 1,
+        text: "/** JSDoc for greet. */",
+    },
+    GoldenComment {
+        kind: "line",
+        bound_symbol: Some(
+            "greet",
+        ),
+        start_line: 3,
+        end_line: 3,
+        text: "// build the greeting",
+    },
+]

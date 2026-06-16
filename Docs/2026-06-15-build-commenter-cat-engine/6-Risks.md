@@ -36,7 +36,7 @@ risks:
     description: "Provider tools (ruff/eslint/shellcheck/gitleaks) change rule IDs, JSON shape, and severity scales each release — ongoing maintenance drift."
     likelihood: high
     impact: low
-    mitigation: "Manifest-first turns most upkeep into a declarative TOML edit + a contract-test run (Idea §11); provider_rule_id is lossless; contract tests catch shape breaks (10.2); provider bumps are comparability events, not CF breaking changes."
+    mitigation: "Manifest-first turns most upkeep into a declarative TOML edit + a contract-test run (Idea §11); provider_rule_id is lossless; contract tests catch shape breaks (10.2); provider bumps are comparability events, not Commenter-Cat breaking changes."
 open_questions:
   - id: Q1
     question: "Which concrete RFC 9535 JSONPath crate and which SARIF→Finding mapping table are adopted?"
@@ -62,11 +62,11 @@ assumptions:
     assumption: "Rust edition 2021, MSRV 1.96."
     confirmed_by: "rustc/cargo 1.96.0 confirmed present in the environment; Idea §10 specifies Rust"
   - id: A3
-    assumption: "The crate split is cf-core (types) + cf-engine (orchestration incl. MCP) + cf-cli (binary), with MCP and CLI sharing the engine library so verbs stay 1:1."
-    confirmed_by: "Idea §4a (MCP verbs 1:1 with CLI) + §10 (cf binary, rmcp surface) — a conservative naming/layout default recorded per the planner minor-unclarity rule"
+    assumption: "The crate split is commenter-cat-core (types) + commenter-cat-engine (orchestration incl. MCP) + commenter-cat-cli (binary), with MCP and CLI sharing the engine library so verbs stay 1:1."
+    confirmed_by: "Idea §4a (MCP verbs 1:1 with CLI) + §10 (commenter-cat binary, rmcp surface) — a conservative naming/layout default recorded per the planner minor-unclarity rule"
   - id: A4
-    assumption: "The product/binary keeps the name Commenter-Cat with the `cf` binary, `cf:` directive, and `.commenter-cat/` cache dir (the design's chosen, reversible naming)."
-    confirmed_by: "Idea §12 Name decision — kept for coherence across ~20 'CF' usages"
+    assumption: "The product/binary keeps the name Commenter-Cat with the `commenter-cat` binary, `commenter-cat:` directive, and `.commenter-cat/` cache dir (the design's chosen, reversible naming)."
+    confirmed_by: "Idea §12 Name decision — kept for coherence across ~20 'Commenter-Cat' usages"
   - id: A5
     assumption: "No Rust-specific user rule file exists; general.md governs the Rust engine, python.md applies only to Python test fixtures."
     confirmed_by: "ls of ~/Workspace/GPT-Prompts/.claude/rules/ at analysis time — only general.md, python.md, react.md"
@@ -74,7 +74,7 @@ assumptions:
     assumption: "Implementation-tuning values (worker counts, timeouts, ranking weights, JSONPath lib, embedding model) are decided in code during the relevant phase, not in this plan."
     confirmed_by: "Idea §14 explicitly defers these to implementation-tuning"
 rollback:
-  strategy: "Greenfield build, so rollback is per-task git revert — each task is a focused, independently-revertable change to new files. The runtime cache is rebuildable + gitignored (never a rollback concern). The only non-rebuildable artifact is the committed baseline (commenter-cat.baseline.toml), which migrates in place via `cf baseline migrate` and is read current + N-1. STATUS.md tracks per-task waypoints; a failed task returns to queued (attempt++)."
+  strategy: "Greenfield build, so rollback is per-task git revert — each task is a focused, independently-revertable change to new files. The runtime cache is rebuildable + gitignored (never a rollback concern). The only non-rebuildable artifact is the committed baseline (commenter-cat.baseline.toml), which migrates in place via `commenter-cat baseline migrate` and is read current + N-1. STATUS.md tracks per-task waypoints; a failed task returns to queued (attempt++)."
   trigger_states: [failed, blocked]
 ---
 
@@ -82,12 +82,12 @@ rollback:
 
 ## Risks
 - **R1 — Native-artifact matrix (high/high):** the per-platform sqlite-vec + ONNX artifacts are "the real packaging work" (Idea §10). Version-match per target; CI fails the release on a missing artifact and tests `load_extension` on each OS. Monitoring signal: release CI artifact-presence check + per-OS extension-load test.
-- **R2 — eslint Node stack (high/medium):** the single non-Rust runtime and the hardest reproducibility surface. Isolated as the lone Tier-2 provider, full lockfile pin, two Node tiers, `reproducibility_level` surfaced. Signal: `cf doctor` config-differs + `reproducibility_level` in run metadata.
+- **R2 — eslint Node stack (high/medium):** the single non-Rust runtime and the hardest reproducibility surface. Isolated as the lone Tier-2 provider, full lockfile pin, two Node tiers, `reproducibility_level` surfaced. Signal: `commenter-cat doctor` config-differs + `reproducibility_level` in run metadata.
 - **R3 — Parse-invariance edge cases (medium/high):** a safe-write breach if any code-node change slips through. Property-tested over arbitrary edits (the load-bearing proptest), abort on any delta, CRLF tested. Signal: proptest failures + the abort counter.
 - **R4 — JSONPath portability (medium/medium):** dialect differences could break manifest determinism. Pin one RFC 9535 lib; contract-test against fixtures; no code in manifests. Signal: manifest contract-test diffs.
 - **R5 — Tier-4 fuzzy mis-match (low/high):** would hide a real finding if wired to suppression. Architecturally forbidden from suppression; identity stability property-tested. Signal: identity proptest + a suppression-tier assertion.
 - **R6 — Coordinate reconciliation (medium/medium):** UTF-16 vs byte, 1- vs 0-based. Centralized conversion module, property-tested with multi-byte chars, per-adapter declared convention. Signal: coordinate unit/property tests.
-- **R7 — Provider tool drift (high/low):** rule IDs/shape/severity change each release. Manifest-first makes upkeep declarative; lossless rule IDs; contract tests catch breaks; bumps are comparability events. Signal: provider contract-test breaks + `cf doctor`.
+- **R7 — Provider tool drift (high/low):** rule IDs/shape/severity change each release. Manifest-first makes upkeep declarative; lossless rule IDs; contract tests catch breaks; bumps are comparability events. Signal: provider contract-test breaks + `commenter-cat doctor`.
 
 ## Open Questions
 None are blocking — all are Idea §14 implementation-tuning decisions made in-code during the relevant phase:
@@ -97,7 +97,7 @@ None are blocking — all are Idea §14 implementation-tuning decisions made in-
 - **Q4** (bundled embedding model + ONNX export/version) — by Phase 4.
 
 ## Assumptions
-All confirmable from the codebase analysis or the Idea spec (see frontmatter `confirmed_by`): greenfield workspace creation (A1), Rust 2021 / MSRV 1.96 (A2), the three-crate split with MCP/CLI sharing the engine (A3, a conservative default per the minor-unclarity rule), the kept Commenter-Cat/`cf` naming (A4), `general.md` as the governing rule set (A5), and implementation-tuning values decided in-code (A6).
+All confirmable from the codebase analysis or the Idea spec (see frontmatter `confirmed_by`): greenfield workspace creation (A1), Rust 2021 / MSRV 1.96 (A2), the three-crate split with MCP/CLI sharing the engine (A3, a conservative default per the minor-unclarity rule), the kept Commenter-Cat/`commenter-cat` naming (A4), `general.md` as the governing rule set (A5), and implementation-tuning values decided in-code (A6).
 
 ## Rollback Strategy
-Greenfield build → rollback is a per-task `git revert` of focused changes to new files; tasks are independently revertable. The runtime two-layer cache is rebuildable and gitignored, never a rollback concern (Idea §6). The only non-rebuildable artifact is the **committed baseline** (`commenter-cat.baseline.toml`), which migrates in place (`cf baseline migrate`, read current + N-1, Idea §11). `STATUS.md` tracks per-task waypoints; a failed task returns to `queued` with `attempt` incremented.
+Greenfield build → rollback is a per-task `git revert` of focused changes to new files; tasks are independently revertable. The runtime two-layer cache is rebuildable and gitignored, never a rollback concern (Idea §6). The only non-rebuildable artifact is the **committed baseline** (`commenter-cat.baseline.toml`), which migrates in place (`commenter-cat baseline migrate`, read current + N-1, Idea §11). `STATUS.md` tracks per-task waypoints; a failed task returns to `queued` with `attempt` incremented.

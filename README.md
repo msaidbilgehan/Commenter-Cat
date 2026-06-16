@@ -1,4 +1,4 @@
-# Commenter-Cat (`cf`)
+# Commenter-Cat
 
 [![CI](https://github.com/msaidbilgehan/Commenter-Cat/actions/workflows/ci.yml/badge.svg)](https://github.com/msaidbilgehan/Commenter-Cat/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
@@ -19,7 +19,7 @@ is substrate that makes the loop fast, accurate, and safe.
 
 ## What it does
 
-A coding agent reaches for `cf` mid-task and stays in one loop:
+A coding agent reaches for `commenter-cat` mid-task and stays in one loop:
 
 ```text
 find ─▶ understand ─▶ judge ─▶ update ─▶ re-check ─┐
@@ -64,21 +64,21 @@ Requires **Rust 1.96+** (the workspace MSRV).
 ```sh
 git clone https://github.com/msaidbilgehan/Commenter-Cat
 cd Commenter-Cat
-cargo install --path crates/cf-cli   # installs the `cf` binary
+cargo install --path crates/commenter-cat-cli   # installs the `commenter-cat` binary
 # or, without installing:
-cargo build --release -p cf-cli      # → target/release/cf
+cargo build --release -p commenter-cat-cli      # → target/release/commenter-cat
 ```
 
 **Prebuilt binaries** are published to [GitHub Releases](https://github.com/msaidbilgehan/Commenter-Cat/releases)
 on each tagged release (`v*`) for the five tier-1 targets below. Each release artifact is a
-single self-contained `cf` binary — `sqlite-vec` is statically linked and the ONNX embedding
+single self-contained `commenter-cat` binary — `sqlite-vec` is statically linked and the ONNX embedding
 model is fetched on first use, so there is no per-platform native side-artifact.
 
 > Crates.io publishing is planned. Until then, install from source or grab a release binary.
 
 ### External providers
 
-`cf`'s native pass (extraction, mapping, markers, rot candidates, search) runs with **no
+`commenter-cat`'s native pass (extraction, mapping, markers, rot candidates, search) runs with **no
 external tools**. Deep per-language rules are delegated to providers that are **fetched and
 cached at runtime, never bundled**:
 
@@ -95,31 +95,31 @@ non-fatal); the native pass still runs.
 ## Usage
 
 ```sh
-cf check [PATHS...]              # run the analysis, render findings, persist the index
-cf check src --format jsonl      # canonical machine-readable output
-cf check --strict                # fail on ANY finding (CI gate)
+commenter-cat check [PATHS...]              # run the analysis, render findings, persist the index
+commenter-cat check src --format jsonl      # canonical machine-readable output
+commenter-cat check --strict                # fail on ANY finding (CI gate)
 
-cf candidates --limit 20         # the native rot + marker worklist, ranked & bounded
-cf query "stale auth comment"    # search the persisted index (keyword + semantic)
-cf context <COMMENT_ID>          # one comment + its findings
-cf context <COMMENT_ID> --with-code   # ...plus the bound code span
+commenter-cat candidates --limit 20         # the native rot + marker worklist, ranked & bounded
+commenter-cat query "stale auth comment"    # search the persisted index (keyword + semantic)
+commenter-cat context <COMMENT_ID>          # one comment + its findings
+commenter-cat context <COMMENT_ID> --with-code   # ...plus the bound code span
 
-cf apply-edit <COMMENT_ID> "# updated text"   # parse-invariant edit, re-checked inline
-cf remove <COMMENT_ID>                         # remove a comment, re-checked inline
+commenter-cat apply-edit <COMMENT_ID> "# updated text"   # parse-invariant edit, re-checked inline
+commenter-cat remove <COMMENT_ID>                         # remove a comment, re-checked inline
 
-cf doctor                        # list the providers cf would run + their contract
-cf install-hooks                 # install the non-fatal git cache-warmer hooks
-cf mcp                           # serve the MCP protocol over stdio (the agent surface)
+commenter-cat doctor                        # list the providers commenter-cat would run + their contract
+commenter-cat install-hooks                 # install the non-fatal git cache-warmer hooks
+commenter-cat mcp                           # serve the MCP protocol over stdio (the agent surface)
 ```
 
 **Global flags** (apply to every verb): `--stats`, `--system-tools` (use tools on `PATH`
 instead of the pinned toolchain), `--hermetic` (require the pinned toolchain), `--show-suppressed`.
 
-`cf --help` lists every verb. Exit codes: `0` clean · `1` findings at/above the gate · `2`
+`commenter-cat --help` lists every verb. Exit codes: `0` clean · `1` findings at/above the gate · `2`
 an operational error.
 
-> **Partially wired in the CLI:** `cf baseline accept|prune` is wired — it snapshots/prunes the
-> committed baseline. `cf suppressions export` and `cf issues sync` parse but return an explicit
+> **Partially wired in the CLI:** `commenter-cat baseline accept|prune` is wired — it snapshots/prunes the
+> committed baseline. `commenter-cat suppressions export` and `commenter-cat issues sync` parse but return an explicit
 > "wire deliberately" message: the first mutates source (and depends on a suppression pass `check`
 > does not yet apply), the second is network- and `gh`-backed and outward-facing. Both underlying
 > engine modules exist and are exercised by tests.
@@ -136,7 +136,7 @@ an operational error.
 
 1. **Parse-invariance** — after the edit, the file is re-parsed and the code-node tree must be
    byte-identical; if any code node changed, the edit **aborts**.
-2. **Write-protection by kind** — behavior-bearing comments (`cf:*` and tool directives like
+2. **Write-protection by kind** — behavior-bearing comments (`commenter-cat:*` and tool directives like
    `# noqa` / `// eslint-disable` / `# type: ignore`, shebangs, encoding declarations) require
    an explicit `--allow-significant` acknowledgment.
 
@@ -144,8 +144,8 @@ an operational error.
 
 Configuration is discovered automatically, nearest-first:
 
-1. `CF_*` environment variables (e.g. `CF_SEVERITY_FAIL_ON`, `CF_PROVIDERS_PYTHON`,
-   `CF_OUTPUT_DEFAULT_FORMAT`) — highest precedence.
+1. `COMMENTER_CAT_*` environment variables (e.g. `COMMENTER_CAT_SEVERITY_FAIL_ON`, `COMMENTER_CAT_PROVIDERS_PYTHON`,
+   `COMMENTER_CAT_OUTPUT_DEFAULT_FORMAT`) — highest precedence.
 2. `commenter-cat.toml` files, walked up from the working directory (nearest wins).
 3. The XDG global config at `$XDG_CONFIG_HOME/commenter-cat/config.toml`.
 
@@ -177,26 +177,26 @@ Tier-1 targets, built and released by CI (a missing build for any target fails t
 ```sh
 cargo build                                          # build the workspace
 cargo test --workspace                               # full suite (unit + property + golden + contract + integration + MCP)
-cargo test -p cf-engine -- --ignored                 # the real-ONNX embedding test (downloads a model)
+cargo test -p commenter-cat-engine -- --ignored                 # the real-ONNX embedding test (downloads a model)
 cargo clippy --workspace --all-targets -- -D warnings   # lint gate (warnings are errors)
 cargo fmt --all --check                              # format check
-cargo bench -p cf-engine --bench native_pass         # native-pass benchmarks
+cargo bench -p commenter-cat-engine --bench native_pass         # native-pass benchmarks
 ```
 
 ### Project layout
 
 ```text
 crates/
-  cf-core/      # pure domain — errors, versioned contracts, config, Finding, Comment (no infrastructure)
-  cf-engine/    # all infrastructure — walk, extract, map, git, storage, providers, MCP, render
-  cf-cli/       # the thin `cf` binary (clap verb surface, 1:1 with the MCP tools)
+  commenter-cat-core/      # pure domain — errors, versioned contracts, config, Finding, Comment (no infrastructure)
+  commenter-cat-engine/    # all infrastructure — walk, extract, map, git, storage, providers, MCP, render
+  commenter-cat-cli/       # the thin `commenter-cat` binary (clap verb surface, 1:1 with the MCP tools)
 Docs/
   Idea.md       # the full design decisions
   2026-06-15-build-commenter-cat-engine/   # the execution plan (STATUS.md = live state)
 ```
 
-The crates enforce a strict layer discipline: `cf-core` imports no infrastructure; `cf-engine`
-owns it and translates failures into `cf_core::CfError` at each adapter seam.
+The crates enforce a strict layer discipline: `commenter-cat-core` imports no infrastructure; `commenter-cat-engine`
+owns it and translates failures into `commenter_cat_core::CommenterCatError` at each adapter seam.
 
 ## License
 

@@ -14,7 +14,7 @@ files:
   - { path: 3-Phases/phase-4-storage.md,                     summary: "Two-layer SQLite, FTS5, ONNX embeddings, sqlite-vec, rebuild" }
   - { path: 3-Phases/phase-5-identity.md,                    summary: "Cosmetic fingerprint, composite identity, tiered matching" }
   - { path: 3-Phases/phase-6-providers.md,                   summary: "RuleProvider trait, manifests, eslint native, pinning, doctor" }
-  - { path: 3-Phases/phase-7-operations.md,                  summary: "cf check, parse-invariant apply, suppression, baseline, fix" }
+  - { path: 3-Phases/phase-7-operations.md,                  summary: "commenter-cat check, parse-invariant apply, suppression, baseline, fix" }
   - { path: 3-Phases/phase-8-interfaces.md,                  summary: "CLI, renderers, MCP surface, token economy, round-trip" }
   - { path: 3-Phases/phase-9-adjacent-integrations.md,       summary: "comment-to-issue, git hooks, CI integration" }
   - { path: 3-Phases/phase-10-distribution-and-tests.md,     summary: "Property/golden/contract/integration tests, OS-matrix CI, cargo-dist" }
@@ -29,9 +29,9 @@ reading_order:
   sequential:   [0-Index.md, 1-Objective.md, 2-Scope.md, 4-Context.md, 3-Phases]
 ---
 
-# Build Commenter-Cat — the Rust comment-intelligence engine (`cf`)
+# Build Commenter-Cat — the Rust comment-intelligence engine (`commenter-cat`)
 
-This plan builds **Commenter-Cat** (`cf`): a deterministic, multi-language comment-intelligence layer — a Rust orchestrator that walks a directory, extracts comments with tree-sitter, maps each comment to the code it annotates, delegates per-language rule-checking to best-in-class external tools (ruff, eslint+jsdoc/tsdoc, shellcheck, gitleaks), normalizes their findings into one model, enriches with git, indexes everything in a per-project two-layer SQLite cache (keyword + vector search), and exposes the whole thing as an **agent-facing MCP surface** that a coding agent drives in a live session — the product (Idea §4a). The plan is greenfield: the repo currently holds only `Docs/Idea.md`, `LICENSE`, and `.gitignore`. Phases sequence by hard build dependency, not by rollout — per the Idea's build principle (§0), every capability is in scope as one complete system; there is no MVP, beta, or deferred feature. Start at `7-Execution.md` (orchestrator) or `1-Objective.md` (sequential).
+This plan builds **Commenter-Cat** (`commenter-cat`): a deterministic, multi-language comment-intelligence layer — a Rust orchestrator that walks a directory, extracts comments with tree-sitter, maps each comment to the code it annotates, delegates per-language rule-checking to best-in-class external tools (ruff, eslint+jsdoc/tsdoc, shellcheck, gitleaks), normalizes their findings into one model, enriches with git, indexes everything in a per-project two-layer SQLite cache (keyword + vector search), and exposes the whole thing as an **agent-facing MCP surface** that a coding agent drives in a live session — the product (Idea §4a). The plan is greenfield: the repo currently holds only `Docs/Idea.md`, `LICENSE`, and `.gitignore`. Phases sequence by hard build dependency, not by rollout — per the Idea's build principle (§0), every capability is in scope as one complete system; there is no MVP, beta, or deferred feature. Start at `7-Execution.md` (orchestrator) or `1-Objective.md` (sequential).
 
 ## Files
 
@@ -43,7 +43,7 @@ This plan builds **Commenter-Cat** (`cf`): a deterministic, multi-language comme
 - [3-Phases/phase-4-storage.md](3-Phases/phase-4-storage.md) — Two-layer SQLite, FTS5, ONNX embeddings, sqlite-vec, rebuild
 - [3-Phases/phase-5-identity.md](3-Phases/phase-5-identity.md) — Cosmetic fingerprint, composite identity, tiered matching
 - [3-Phases/phase-6-providers.md](3-Phases/phase-6-providers.md) — RuleProvider trait, manifests, eslint native, pinning, doctor
-- [3-Phases/phase-7-operations.md](3-Phases/phase-7-operations.md) — cf check, parse-invariant apply, suppression, baseline, fix
+- [3-Phases/phase-7-operations.md](3-Phases/phase-7-operations.md) — commenter-cat check, parse-invariant apply, suppression, baseline, fix
 - [3-Phases/phase-8-interfaces.md](3-Phases/phase-8-interfaces.md) — CLI, renderers, MCP surface, token economy, round-trip
 - [3-Phases/phase-9-adjacent-integrations.md](3-Phases/phase-9-adjacent-integrations.md) — comment-to-issue, git hooks, CI integration
 - [3-Phases/phase-10-distribution-and-tests.md](3-Phases/phase-10-distribution-and-tests.md) — Tests, OS-matrix CI, cargo-dist

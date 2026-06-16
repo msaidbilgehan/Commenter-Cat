@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/cf-core", "crates/cf-engine", "crates/cf-cli"]
+members = ["crates/commenter-cat-core", "crates/commenter-cat-engine", "crates/commenter-cat-cli"]
 
 # Shared package metadata. Every member crate inherits these via
 # `field.workspace = true` so the version/edition/MSRV stay in lockstep
-# (Idea §11: the `cf` binary is SemVer 1.0+, one coherent release).
+# (Idea §11: the `commenter-cat` binary is SemVer 1.0+, one coherent release).
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
@@ -13,7 +13,7 @@ license = "BSD-3-Clause"
 authors = ["Muhammed Said"]
 repository = "https://github.com/msaidbilgehan/Commenter-Cat"
 homepage = "https://github.com/msaidbilgehan/Commenter-Cat"
-description = "Commenter-Cat (cf): a deterministic, multi-language comment-intelligence engine."
+description = "Commenter-Cat (commenter-cat): a deterministic, multi-language comment-intelligence engine."
 keywords = ["comments", "linter", "tree-sitter", "mcp", "documentation"]
 categories = ["development-tools", "command-line-utilities"]
 
@@ -22,8 +22,8 @@ categories = ["development-tools", "command-line-utilities"]
 # crates are added by their own phases, not front-loaded here.
 [workspace.dependencies]
 # --- internal crates ---
-cf-core = { path = "crates/cf-core", version = "1.0.0" }
-cf-engine = { path = "crates/cf-engine", version = "1.0.0" }
+commenter-cat-core = { path = "crates/commenter-cat-core", version = "1.0.0" }
+commenter-cat-engine = { path = "crates/commenter-cat-engine", version = "1.0.0" }
 # --- foundation third-party ---
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -64,7 +64,7 @@ panic = "warn"
 todo = "warn"
 unimplemented = "warn"
 dbg_macro = "warn"
-print_stdout = "warn"              # OBS_PRINT_INSTEAD_OF_LOG (cf-cli overrides locally)
+print_stdout = "warn"              # OBS_PRINT_INSTEAD_OF_LOG (commenter-cat-cli overrides locally)
 print_stderr = "warn"
 
 [profile.release]

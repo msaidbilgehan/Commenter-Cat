@@ -7,16 +7,16 @@ entries:
     date: 2026-06-15
     kind: bugfix
     summary: >-
-      Dogfooding cf check on ~/Workspace/AutoTravian (1.8 GB, 4 langs, non-git)
+      Dogfooding commenter-cat check on ~/Workspace/AutoTravian (1.8 GB, 4 langs, non-git)
       surfaced four bugs that broke the provider→finding pipeline end to end;
       all fixed, +5 regression tests (328→333).
   - id: wire-baseline-and-fix-install-hooks-help
     date: 2026-06-15
     kind: enhancement
     summary: >-
-      Post-dogfood checkpoint: corrected the `cf install-hooks` clap help (it
+      Post-dogfood checkpoint: corrected the `commenter-cat install-hooks` clap help (it
       installs cache-warmer post-* hooks, not pre-commit/pre-push) and wired
-      `cf baseline accept|prune` end to end. `suppressions`/`issues` now return
+      `commenter-cat baseline accept|prune` end to end. `suppressions`/`issues` now return
       explicit "wire deliberately" errors rather than silent stubs. +1
       regression test (333→334).
   - id: env-secret-scope-and-parallel-native-pass
@@ -24,14 +24,14 @@ entries:
     kind: enhancement
     summary: >-
       Closed two dogfood open-observations: secret scanning now covers the full
-      cf_scope universe (.env/config via walk_universe, Idea §3/§5), and the
+      commenter_cat_scope universe (.env/config via walk_universe, Idea §3/§5), and the
       native pass runs in parallel via rayon (deterministic — identical output
       order). +1 regression test (334→335).
   - id: wire-provider-result-cache
     date: 2026-06-16
     kind: enhancement
     summary: >-
-      Wired the §6 content-addressed provider-result cache into cf check (it
+      Wired the §6 content-addressed provider-result cache into commenter-cat check (it
       existed but had no caller): a provider never re-runs on an unchanged input
       set, so gitleaks stops rescanning the whole tree (~233s) every run. Adds
       RuleProvider::version_key, project-scope tree-hash keying, --no-cache, and
@@ -47,7 +47,7 @@ Append-only audit of re-plans and edits. Each entry records what changed and why
 
 ### 2026-06-15 — Dogfood on AutoTravian: provider pipeline fixes
 
-Built `cf` (release) and ran `cf check` against `~/Workspace/AutoTravian/` — a
+Built `commenter-cat` (release) and ran `commenter-cat check` against `~/Workspace/AutoTravian/` — a
 1.8 GB, multi-language (Python/TS/JS/Shell), **non-git** corpus with ~960 MB of
 gitignored-but-present vendored deps. The native pass was flawless (15,735
 comments extracted/mapped, markers + rot candidates correct), but **every
@@ -77,8 +77,8 @@ bugs; each got a regression test.
    `report_diagnostics()` writes provider trouble + unattached counts to stderr.
 
 Plus **finding scope-filtering** in `ops::check::fuse` so a project-scoped tool
-scanning `{root}` cannot widen `cf_scope` — out-of-scope (node_modules/.venv)
-secrets are dropped (Idea §5 "a provider never sees a file CF excluded").
+scanning `{root}` cannot widen `commenter_cat_scope` — out-of-scope (node_modules/.venv)
+secrets are dropped (Idea §5 "a provider never sees a file Commenter-Cat excluded").
 
 **Post-fix result on AutoTravian:** ruff/gitleaks attach correctly (verified on a
 seeded fixture: ERA001 + 2 gitleaks secrets fused onto one comment); gitleaks
@@ -89,7 +89,7 @@ correctly filtered; `shellcheck skipped` + unattached secret counts now visible.
 - *gitleaks perf:* project-scoped gitleaks scans the whole tree (~233 s on this
   repo, dominated by the 960 MB of vendored deps it traverses then we filter).
   gitleaks has no path-exclude CLI flag; the designed tree-hash provider cache
-  (§6/§7) is the intended mitigation but is not wired into the `cf check` path.
+  (§6/§7) is the intended mitigation but is not wired into the `commenter-cat check` path.
 - *secret scope vs §3:* the scope-filter currently keys off the comment-language
   walk, so gitleaks hits in `.env`/config files are dropped too. Idea §3 wants
   `.env.*` covered — broadening the scope set to "non-ignored" (not just
@@ -98,16 +98,16 @@ correctly filtered; `shellcheck skipped` + unattached secret counts now visible.
   (Idea §6/§10 stack) is not actually a dependency. A perf gap, not a defect.
 - *`--stats` is a no-op:* the global flag parses but emits nothing.
 
-### 2026-06-15 — Follow-up: wire `cf baseline`, fix `install-hooks` help
+### 2026-06-15 — Follow-up: wire `commenter-cat baseline`, fix `install-hooks` help
 
 A post-dogfood checkpoint flagged two items; both are closed.
 
-1. **`cf install-hooks` help string was wrong.** `cli/mod.rs` described the verb
+1. **`commenter-cat install-hooks` help string was wrong.** `cli/mod.rs` described the verb
    as *"Install the git hooks (pre-commit / pre-push)"*, but the implementation
    installs the cache-warmer **post-commit / -checkout / -merge / -rewrite** hooks
    via `core.hooksPath` (task 9.2; Idea §7) — non-fatal, changed-files-only, never
    hand-editing `.git/hooks`. Corrected the clap doc to describe the real behavior.
-2. **Wired `cf baseline accept|prune`.** The engine `ops::baseline` functions were
+2. **Wired `commenter-cat baseline accept|prune`.** The engine `ops::baseline` functions were
    complete and tested, but the verb returned a "not wired" placeholder. `run_baseline`
    now runs `check`, derives each finding's **Tier-2** identity (`bound_symbol`,
    `cosmetic_fingerprint`, `provider_rule_id`) via `current_identities`, and `accept`
@@ -117,15 +117,15 @@ A post-dogfood checkpoint flagged two items; both are closed.
    deduped) order; `prune` against the same findings → 0 stale. +1 regression test
    (`test_baseline_accept_snapshots_and_prune_keeps_live`, 333→334).
 
-`cf suppressions export` and `cf issues sync` remain **deliberately unwired** — not
+`commenter-cat suppressions export` and `commenter-cat issues sync` remain **deliberately unwired** — not
 silent stubs but explicit, explained errors. `suppressions export` mutates *source*
-files and depends on a suppression pass `cf check` does not yet apply; `issues sync`
+files and depends on a suppression pass `commenter-cat check` does not yet apply; `issues sync`
 is network- + `gh`-backed and outward-facing (files issues against the repo). Both
 are sound engine modules — enabling them is a deliberate act, not a default.
 
 **Open observation (not a bug):** the repo-root `CLAUDE.md` "CLI status" section
-still lists `cf baseline` among the not-wired verbs — stale after this change. That
-file is owner-authored (created outside `cf`'s only write path, which is comment
+still lists `commenter-cat baseline` among the not-wired verbs — stale after this change. That
+file is owner-authored (created outside `commenter-cat`'s only write path, which is comment
 edits); left untouched and flagged rather than edited.
 
 Gate after the follow-up: **334 tests** (was 333), clippy `-D warnings` clean, fmt clean.
@@ -134,9 +134,9 @@ Gate after the follow-up: **334 tests** (was 333), clippy `-D warnings` clean, f
 
 Closed two of the open observations recorded after the dogfood pass.
 
-1. **Secret scope now covers the `cf_scope` universe (Idea §3/§5).** The
+1. **Secret scope now covers the `commenter_cat_scope` universe (Idea §3/§5).** The
    provider-finding scope filter in `ops::check::fuse` keyed off the
-   comment-language file set, so a gitleaks secret in `.env`/config — files CF
+   comment-language file set, so a gitleaks secret in `.env`/config — files Commenter-Cat
    deliberately keeps out of the comment grammar (Idea §3) — was dropped along with
    genuinely out-of-scope hits. Added `walk::walk_universe`: every non-ignored file
    under the root (honoring `.gitignore` + `extra_ignores`), including config
@@ -153,16 +153,16 @@ Closed two of the open observations recorded after the dogfood pass.
    preserved** — `walk` returns a sorted slice and an indexed parallel `collect`
    writes results back in index order, so the fused stream is identical to the
    sequential pass (Idea §11); the golden, property, and integration suites pass
-   unchanged. Added `rayon` to `cf-engine` (already present transitively).
+   unchanged. Added `rayon` to `commenter-cat-engine` (already present transitively).
 
 Gate: **335 tests** (was 334), clippy `-D warnings` clean, fmt clean.
 
 **Remaining open observations** (from the dogfood entry, still not addressed): the
 gitleaks project-scoped tree-scan is slow on large trees (the §6/§7 tree-hash
-provider cache is the intended mitigation, not yet wired into `cf check`); `--stats`
+provider cache is the intended mitigation, not yet wired into `commenter-cat check`); `--stats`
 parses but is a no-op.
 
-### 2026-06-16 — Wire the provider-result cache into `cf check` (Idea §6)
+### 2026-06-16 — Wire the provider-result cache into `commenter-cat check` (Idea §6)
 
 Closes the headline open observation from the dogfood pass — gitleaks rescanning
 the whole tree (~233 s) on every run.
@@ -176,19 +176,19 @@ caller**: `ops::check` always invoked every provider. Wired it in:
   tool upgrade *or* a manifest edit invalidates cached findings (§5 comparability).
   `None` disables caching (in-process natives, absent tools, mocks).
 - **`ops::provider_cache`** wraps each provider run: a project-scoped tool keys on
-  the `cf_scope` universe tree-hash — gitleaks's *retained* findings depend only on
+  the `commenter_cat_scope` universe tree-hash — gitleaks's *retained* findings depend only on
   universe content (out-of-scope hits are filtered), so that key is correct and
   sufficient — and a file-scoped tool on the comment-language file set. The raw
   output is cached; the existing scope filter still runs after. Only `SUCCESS`/
   `EMPTY` are cached; the cache is best-effort (any failure → run, never a wrong
   result).
-- **Cache-dir exclusion** — CF's own `.commenter-cat` is now pruned from the
+- **Cache-dir exclusion** — Commenter-Cat's own `.commenter-cat` is now pruned from the
   universe walk (alongside `.git`); otherwise its mutating `inputs.db`/`index.db`
   would perturb the tree hash and self-invalidate the cache every run.
 - **CLI** — `check()` gained `use_cache`; `--no-cache` bypasses it; `--stats` now
   reports cache hits vs runs (was a no-op on this dimension).
 
-Verified end to end with the real providers: a second `cf check` on an unchanged
+Verified end to end with the real providers: a second `commenter-cat check` on an unchanged
 tree serves ruff + gitleaks from cache (gitleaks does not rescan), a content change
 invalidates and re-runs all, and the `.env` secret is cached and re-surfaced.
 Gate: **338 tests** (was 335), clippy `-D warnings` clean, fmt clean.
