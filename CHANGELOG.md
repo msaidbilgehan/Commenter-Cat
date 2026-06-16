@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - CI passes on Windows again — a repo-wide `.gitattributes` pins LF line endings, so `cargo fmt --all --check` no longer rejects the runner's CRLF-converted checkout; the format gate had been failing before clippy and the tests could run
-- CI now exercises the real-ONNX embedding path in a dedicated job (the `#[ignore]`d test the fast offline suite skips), kept off the matrix's critical path
+- CI now exercises the real-ONNX embedding path in a dedicated job (the `#[ignore]`d test the fast offline suite skips), kept off the matrix's critical path; the all-MiniLM-L6-v2 model is cached across runs and only a transient HuggingFace *fetch* error is retried — a genuine assertion failure (dimensions, determinism, cosine ordering) still fails the build on the first attempt, never masked
 
 ### Security
 
