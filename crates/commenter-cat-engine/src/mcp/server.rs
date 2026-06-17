@@ -11,12 +11,104 @@
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
+use rmcp::schemars::JsonSchema;
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
 use commenter_cat_core::error::{cause_chain, CommenterCatError, CommenterCatResult};
 
 use super::McpSurface;
+
+// Typed parameter schemas for the six tools. Deriving `JsonSchema` makes the
+// rmcp `#[tool]` macro emit a proper `{"type":"object", …}` inputSchema with
+// per-field documentation. Without a typed parameter, an untyped `Value`
+// argument derives the permissive `AnyValue` schema (no `"type"`), which strict
+// MCP clients — Claude Code and the Anthropic API — reject; the rejection drops
+// the *entire* tool list, so the server connects but exposes nothing. Each
+// struct is deserialized at the transport edge, then re-serialized to a `Value`
+// for the shared [`McpSurface`] dispatch, so the CLI and MCP keep one engine
+// entry point. `schemars(crate = "rmcp::schemars")` targets rmcp's re-export, so
+// there is no direct `schemars` dependency to drift from the one the macro uses.
+
+/// Arguments for `query`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct QueryArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    /// Free-text search over comment bodies (full-text + vector). Omit to match broadly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    query: Option<String>,
+    /// Maximum number of results to return. Defaults to 20.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
+}
+
+/// Arguments for `context`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ContextArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    /// Numeric comment id returned by `query`, passed as a string (e.g. "42").
+    comment_id: String,
+    /// When true, include the bound code span alongside the comment. Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    with_code: Option<bool>,
+}
+
+/// Arguments for `check`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct CheckArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+}
+
+/// Arguments for `candidates`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct CandidatesArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    /// Maximum number of candidates to return. Defaults to 20.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
+}
+
+/// Arguments for `apply_edit`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ApplyEditArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    /// Numeric comment id returned by `query`, passed as a string (e.g. "42").
+    comment_id: String,
+    /// Replacement comment text, including the comment delimiters (e.g. "# …").
+    new_text: String,
+    /// Permit edits to behavior-bearing comments (directive, shebang, encoding-decl). Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_significant: Option<bool>,
+}
+
+/// Arguments for `remove`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct RemoveArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    /// Numeric comment id returned by `query`, passed as a string (e.g. "42").
+    comment_id: String,
+    /// Permit removing behavior-bearing comments (directive, shebang, encoding-decl). Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_significant: Option<bool>,
+}
 
 /// The Commenter-Cat MCP server — the six primitives, 1:1 with the CLI verbs.
 /// The `#[tool_router]`/`#[tool_handler]` macros generate the routing and a
@@ -38,7 +130,7 @@ impl CommenterCatServer {
     )]
     async fn query(
         &self,
-        Parameters(args): Parameters<Value>,
+        Parameters(args): Parameters<QueryArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("query", args)
     }
@@ -49,7 +141,7 @@ impl CommenterCatServer {
     )]
     async fn context(
         &self,
-        Parameters(args): Parameters<Value>,
+        Parameters(args): Parameters<ContextArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("context", args)
     }
@@ -60,7 +152,7 @@ impl CommenterCatServer {
     )]
     async fn check(
         &self,
-        Parameters(args): Parameters<Value>,
+        Parameters(args): Parameters<CheckArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("check", args)
     }
@@ -71,7 +163,7 @@ impl CommenterCatServer {
     )]
     async fn candidates(
         &self,
-        Parameters(args): Parameters<Value>,
+        Parameters(args): Parameters<CandidatesArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("candidates", args)
     }
@@ -82,7 +174,7 @@ impl CommenterCatServer {
     )]
     async fn apply_edit(
         &self,
-        Parameters(args): Parameters<Value>,
+        Parameters(args): Parameters<ApplyEditArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("apply_edit", args)
     }
@@ -93,7 +185,7 @@ impl CommenterCatServer {
     )]
     async fn remove(
         &self,
-        Parameters(args): Parameters<Value>,
+        Parameters(args): Parameters<RemoveArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("remove", args)
     }
@@ -111,12 +203,16 @@ impl ServerHandler for CommenterCatServer {
     }
 }
 
-/// Delegates a tool call to the shared surface, returning the JSON result as a
-/// text content block (raw `CallToolResult`, so rmcp generates no output schema
-/// for the arbitrary JSON shape). A `CommenterCatError` maps to an MCP error carrying the
-/// cause chain.
-fn dispatch(name: &str, args: Value) -> Result<CallToolResult, ErrorData> {
+/// Delegates a tool call to the shared surface. The typed `args` are serialized
+/// back to JSON for [`McpSurface::call`] — the same dispatch the CLI verbs use —
+/// and the JSON result is returned as a text content block (a raw
+/// `CallToolResult`, so rmcp generates no output schema for the arbitrary JSON
+/// shape). A `CommenterCatError` maps to an MCP error carrying the cause chain.
+fn dispatch<T: Serialize>(name: &str, args: T) -> Result<CallToolResult, ErrorData> {
     let to_mcp_err = |e: CommenterCatError| ErrorData::internal_error(cause_chain(&e), None);
+    let args = serde_json::to_value(args).map_err(|e| {
+        to_mcp_err(CommenterCatError::render("serializing MCP tool arguments").caused_by(e))
+    })?;
     let value = McpSurface::call(name, &args).map_err(to_mcp_err)?;
     let text = serde_json::to_string(&value).map_err(|e| {
         to_mcp_err(CommenterCatError::render("serializing MCP tool result").caused_by(e))
@@ -184,5 +280,24 @@ mod tests {
     #[test]
     fn test_dispatch_maps_errors_to_mcp_errors() {
         assert!(dispatch("nope", json!({})).is_err());
+    }
+
+    #[test]
+    fn test_tool_input_schemas_are_objects() {
+        // Regression guard: every tool's inputSchema must be a JSON Schema with
+        // `"type": "object"`. An untyped `Value` parameter derives a schema with
+        // no `type`, which strict MCP clients reject — silently dropping the
+        // whole tool list. The typed parameter structs keep each schema valid.
+        let tools = CommenterCatServer::tool_router().list_all();
+        assert_eq!(tools.len(), 6, "all six primitives are registered");
+        for tool in tools {
+            let schema = &tool.input_schema;
+            assert_eq!(
+                schema.get("type").and_then(|t| t.as_str()),
+                Some("object"),
+                "tool {:?} inputSchema must be an object schema, got {schema:?}",
+                tool.name
+            );
+        }
     }
 }
