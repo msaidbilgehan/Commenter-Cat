@@ -245,11 +245,18 @@ impl ManifestProvider {
     /// Expands `command`, replacing `{files}` with the file list and `{root}`
     /// with the scan root (for project-scoped tools that take a single dir).
     fn build_args(&self, files: &[PathBuf], root: &Path) -> Vec<String> {
+        // `{root}` doubles as the provider's `current_dir` (see `run`), so it MUST
+        // be absolute: a relative root (e.g. `commenter-cat check sub/dir`) would
+        // resolve against itself inside the child — the tool then scans
+        // `sub/dir/sub/dir`, fatal-exits, and writes empty stdout, which looks
+        // like a false PARTIAL. `std::path::absolute` makes it absolute without
+        // touching the filesystem (no existence/symlink requirement).
+        let abs_root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
         let mut args = Vec::new();
         for token in &self.manifest.command {
             match token.as_str() {
                 FILES_TOKEN => args.extend(files.iter().map(|f| f.to_string_lossy().into_owned())),
-                ROOT_TOKEN => args.push(root.to_string_lossy().into_owned()),
+                ROOT_TOKEN => args.push(abs_root.to_string_lossy().into_owned()),
                 _ => args.push(token.clone()),
             }
         }
@@ -298,6 +305,19 @@ impl RuleProvider for ManifestProvider {
     }
 
     fn run(&self, files: &[PathBuf], context: &ProviderContext<'_>) -> ProviderRun {
+        // A {files}-driven provider with no in-scope files has nothing to check.
+        // Invoking the tool with an empty list makes it error ("no files
+        // specified") and write empty stdout — a false PARTIAL. Treat an empty
+        // file set as SKIPPED: that language is simply off for this scope.
+        if files.is_empty()
+            && self
+                .manifest
+                .command
+                .iter()
+                .any(|t| t.as_str() == FILES_TOKEN)
+        {
+            return ProviderRun::skipped();
+        }
         let args = self.build_args(files, context.root);
         let Some((binary, rest)) = args.split_first() else {
             return ProviderRun::skipped();
@@ -478,6 +498,37 @@ coordinate_system = "1-based-utf8"
             args,
             vec!["gitleaks", "dir", "--report-path", "-", "/repo/here"]
         );
+    }
+
+    #[test]
+    fn test_build_args_makes_relative_root_absolute() {
+        // Regression (dogfooded): a RELATIVE root must expand to an absolute path.
+        // `{root}` is also the provider's current_dir, so a relative value resolved
+        // against itself ("sub/dir/sub/dir"); the tool fatal-exited with empty
+        // stdout, and Commenter-Cat misreported a clean scan as PARTIAL.
+        let provider = ManifestProvider::from_toml("gitleaks", ROOT_SCOPED).unwrap();
+        let args = provider.build_args(&[], Path::new("sub/dir"));
+        let root_arg = args.last().expect("root arg present");
+        assert!(
+            Path::new(root_arg).is_absolute(),
+            "scan root must be absolute, got {root_arg:?}"
+        );
+        assert!(
+            root_arg.replace('\\', "/").ends_with("sub/dir"),
+            "root preserved: {root_arg:?}"
+        );
+    }
+
+    #[test]
+    fn test_files_provider_with_no_files_is_skipped_not_partial() {
+        // Dogfooded: a {files} provider over a scope containing none of its files
+        // (e.g. shellcheck where there are no shell files) must SKIP — not run the
+        // tool with an empty list, which errors and looks like a false PARTIAL.
+        // The skip precedes any spawn, so it is independent of the tool's presence.
+        let provider = ManifestProvider::from_toml("ruff", RUFF_LIKE).unwrap();
+        let overrides = BTreeMap::new();
+        let context = ProviderContext::new(Path::new("."), &overrides);
+        assert_eq!(provider.run(&[], &context).state, RunState::Skipped);
     }
 
     #[test]

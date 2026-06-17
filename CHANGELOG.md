@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CI passes on Windows again — a repo-wide `.gitattributes` pins LF line endings, so `cargo fmt --all --check` no longer rejects the runner's CRLF-converted checkout; the format gate had been failing before clippy and the tests could run
 - CI now exercises the real-ONNX embedding path in a dedicated job (the `#[ignore]`d test the fast offline suite skips), kept off the matrix's critical path; the all-MiniLM-L6-v2 model is cached across runs and only a transient HuggingFace *fetch* error is retried — a genuine assertion failure (dimensions, determinism, cosine ordering) still fails the build on the first attempt, never masked
+- Providers no longer report a false `PARTIAL` (findings *unavailable*) on a clean scan — two cases surfaced by dogfooding `commenter-cat check` on a subdirectory: (1) a `{root}`-scoped tool (gitleaks) received a *relative* scan root that doubled against its `current_dir` (`sub/dir/sub/dir`) and fatal-exited with empty output → the root is now passed absolute; (2) a `{files}`-scoped tool (shellcheck/ruff) invoked with an empty file list (a scope holding none of its language) errored → such a provider is now `SKIPPED` (its language is off for this scope) rather than run empty
 
 ### Security
 
