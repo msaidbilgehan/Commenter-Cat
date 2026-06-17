@@ -23,6 +23,10 @@ pub struct ManifestCapabilities {
     /// Whether the tool emits SARIF.
     #[serde(default)]
     pub supports_sarif: bool,
+    /// Whether findings count only inside a comment span — the secrets-in-comments
+    /// opt-in (gitleaks). Defaults off: most tools lint code, not just comments.
+    #[serde(default)]
+    pub comment_scoped: bool,
     /// The tool's declared coordinate convention (routes to Phase-3 conversion).
     pub coordinate_system: CoordinateSystem,
 }
@@ -36,6 +40,7 @@ impl ManifestCapabilities {
             supports_fix: self.supports_fix,
             supports_incremental: self.supports_incremental,
             supports_sarif: self.supports_sarif,
+            comment_scoped: self.comment_scoped,
             coordinate_system: self.coordinate_system,
         }
     }

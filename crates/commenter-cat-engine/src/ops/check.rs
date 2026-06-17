@@ -196,17 +196,50 @@ fn fuse(
         } else {
             cache_stats.runs += 1;
         }
-        run_states.push((provider.id().to_owned(), run.state));
-        provider_findings.extend(run.findings);
+        if provider.capabilities().comment_scoped {
+            // Comment-scoped (gitleaks): a hit counts only when it sits inside an
+            // extracted comment span — a secret *in a comment*, not in code or a
+            // build artifact. Comments exist only for walked files (⊆
+            // `commenter_cat_scope`), so comment-membership already implies in-scope.
+            // The state is recomputed from what survives, so a provider whose every
+            // hit was outside comments reads EMPTY rather than a misleading SUCCESS;
+            // PARTIAL/SKIPPED are trust signals and pass through (Idea §5). Survivors
+            // attach in step 3 — `within_comment_span` IS the attach-by-location test.
+            let kept: Vec<Finding> = run
+                .findings
+                .into_iter()
+                .filter(|finding| {
+                    comments
+                        .iter()
+                        .any(|comment| normalize::within_comment_span(comment, finding))
+                })
+                .collect();
+            let state = match run.state {
+                RunState::Partial | RunState::Skipped => run.state,
+                RunState::Success | RunState::Empty => {
+                    if kept.is_empty() {
+                        RunState::Empty
+                    } else {
+                        RunState::Success
+                    }
+                }
+            };
+            run_states.push((provider.id().to_owned(), state));
+            provider_findings.extend(kept);
+        } else {
+            run_states.push((provider.id().to_owned(), run.state));
+            provider_findings.extend(run.findings);
+        }
     }
     let providers_time = providers_start.elapsed();
 
-    // Commenter-Cat owns the file universe (Idea §3, §5): `commenter_cat_scope` is *every* non-ignored
-    // file, not just the comment-language subset — so a project-scoped tool (e.g.
-    // gitleaks) keeps a secret it finds in `.env`/config (surfaced as unattached,
-    // since Commenter-Cat extracts no comments there), while a hit in a gitignored/excluded
-    // path (node_modules/.venv) is dropped. A provider only vetoes within
-    // `commenter_cat_scope`, never widens it.
+    // Commenter-Cat owns the file universe (Idea §3, §5): `commenter_cat_scope` is *every*
+    // non-ignored file, not just the comment-language subset — so a (non-comment-
+    // scoped) project tool keeps a hit it finds in `.env`/config (surfaced as
+    // unattached, since Commenter-Cat extracts no comments there), while a hit in a
+    // gitignored/excluded path (node_modules/.venv) is dropped. A provider only
+    // vetoes within `commenter_cat_scope`, never widens it. (Comment-scoped providers
+    // like gitleaks were already narrowed to comment spans in the loop above.)
     let in_scope: HashSet<String> = universe.into_iter().collect();
     provider_findings.retain(|finding| in_scope.contains(&finding.file));
 
@@ -263,6 +296,7 @@ mod tests {
                     supports_fix: false,
                     supports_incremental: true,
                     supports_sarif: false,
+                    comment_scoped: false,
                     coordinate_system: CoordinateSystem::tree_sitter(),
                 },
             }
@@ -340,6 +374,7 @@ mod tests {
                 supports_fix: false,
                 supports_incremental: false,
                 supports_sarif: false,
+                comment_scoped: false,
                 coordinate_system: CoordinateSystem::tree_sitter(),
             },
         };
@@ -360,9 +395,10 @@ mod tests {
         assert_eq!(result.run_states[0].1, RunState::Success);
     }
 
-    /// A project-scoped mock (gitleaks-shaped) reporting a `secret` finding for
-    /// each named file — to prove `commenter_cat_scope` filtering keeps config-file hits
-    /// (`.env`) but drops gitignored ones.
+    /// A project-scoped, *non*-comment-scoped secrets mock reporting a `secret`
+    /// for each named file — to prove the `commenter_cat_scope` universe veto keeps
+    /// config-file hits (`.env`) but drops gitignored ones, independent of the
+    /// comment-scoping real gitleaks now layers on top (see the test below).
     struct SecretScanProvider {
         files: Vec<String>,
         capabilities: Capabilities,
@@ -377,6 +413,7 @@ mod tests {
                     supports_fix: false,
                     supports_incremental: false,
                     supports_sarif: true,
+                    comment_scoped: false,
                     coordinate_system: CoordinateSystem::tree_sitter(),
                 },
             }
@@ -441,6 +478,134 @@ mod tests {
         assert_eq!(result.unattached[0].category, Category::Secret);
     }
 
+    /// A **comment-scoped** secret scanner (gitleaks-shaped): it reports two
+    /// secrets in one file — one whose byte lands inside the file's comment, one
+    /// out in the code — so the test can prove comment-scoping keeps the former
+    /// and drops the latter entirely (Idea §5).
+    struct CommentScopedSecretProvider {
+        capabilities: Capabilities,
+        emit_comment_hit: bool,
+        emit_code_hit: bool,
+    }
+
+    impl CommentScopedSecretProvider {
+        fn new(emit_comment_hit: bool, emit_code_hit: bool) -> Self {
+            Self {
+                capabilities: Capabilities {
+                    scope: Scope::Project,
+                    supports_fix: false,
+                    supports_incremental: false,
+                    supports_sarif: false,
+                    comment_scoped: true,
+                    coordinate_system: CoordinateSystem::tree_sitter(),
+                },
+                emit_comment_hit,
+                emit_code_hit,
+            }
+        }
+    }
+
+    impl RuleProvider for CommentScopedSecretProvider {
+        fn id(&self) -> &str {
+            "gitleaks"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.capabilities
+        }
+        fn run(&self, _files: &[PathBuf], _ctx: &ProviderContext<'_>) -> ProviderRun {
+            let secret = |range: Range, message: &str| Finding {
+                file: "pkg/m.py".to_owned(),
+                target: FindingTarget::Symbol(BoundSymbol::new("pkg/m.py")),
+                range,
+                origin: Origin::Other("gitleaks".to_owned()),
+                provider_rule_id: "gitleaks:generic-api-key".to_owned(),
+                canonical_rule_id: "generic-api-key".to_owned(),
+                category: Category::Secret,
+                severity: Severity::Critical,
+                severity_native: None,
+                message: message.to_owned(),
+                fix: Fix::None,
+                url: None,
+                also_from: Default::default(),
+            };
+            // File `# api key\nTOKEN = "x"\n`: the comment spans bytes 0..9, code
+            // begins at byte 10. The comment hit sits on the `#` (byte 0), the code
+            // hit on `TOKEN` (byte 12).
+            let mut hits = Vec::new();
+            if self.emit_comment_hit {
+                hits.push(secret(Range::new(0, 0, 1, 1), "secret in a comment"));
+            }
+            if self.emit_code_hit {
+                hits.push(secret(Range::new(12, 12, 2, 2), "secret in code"));
+            }
+            ProviderRun::ran(hits)
+        }
+    }
+
+    #[test]
+    fn test_comment_scoped_provider_keeps_secret_in_comment_drops_code() {
+        // gitleaks is comment-scoped (Idea §5): a secret *inside a comment*
+        // attaches and surfaces; a secret out in code is dropped at fusion — not
+        // attached, and crucially not surfaced as unattached either.
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "# api key\nTOKEN = \"x\"\n");
+        let provider = CommentScopedSecretProvider::new(true, true);
+        let providers: [&dyn RuleProvider; 1] = [&provider];
+
+        let result = check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
+
+        assert!(
+            result.unattached.is_empty(),
+            "the in-code secret is dropped, never surfaced as unattached"
+        );
+        let secrets: Vec<&Finding> = result
+            .comments
+            .iter()
+            .flat_map(|comment| &comment.findings)
+            .filter(|finding| finding.category == Category::Secret)
+            .collect();
+        assert_eq!(
+            secrets.len(),
+            1,
+            "only the secret sitting inside the comment survives"
+        );
+        assert_eq!(secrets[0].message, "secret in a comment");
+        // One hit survived the comment filter → SUCCESS.
+        assert_eq!(
+            result.run_states,
+            vec![("gitleaks".to_owned(), RunState::Success)]
+        );
+    }
+
+    #[test]
+    fn test_comment_scoped_code_only_hit_recomputes_to_empty() {
+        // The original puzzle: gitleaks *ran* and found a secret (raw SUCCESS), but
+        // it was out in code (or a build artifact), not a comment. A comment-scoped
+        // run drops it and recomputes the state to EMPTY — no misleading SUCCESS,
+        // nothing surfaced (Idea §5).
+        let repo = TestRepo::new();
+        repo.write("pkg/m.py", "# api key\nTOKEN = \"x\"\n");
+        let provider = CommentScopedSecretProvider::new(false, true);
+        let providers: [&dyn RuleProvider; 1] = [&provider];
+
+        let result = check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
+
+        assert_eq!(
+            result.run_states,
+            vec![("gitleaks".to_owned(), RunState::Empty)],
+            "a raw SUCCESS with no in-comment hit recomputes to EMPTY"
+        );
+        assert!(result.unattached.is_empty());
+        assert!(
+            result
+                .comments
+                .iter()
+                .flat_map(|comment| &comment.findings)
+                .all(|finding| finding.category != Category::Secret),
+            "the code secret never surfaces"
+        );
+    }
+
     #[test]
     fn test_check_fuses_provider_and_native_findings() {
         let repo = TestRepo::new();
@@ -489,6 +654,7 @@ mod tests {
                     supports_fix: false,
                     supports_incremental: false,
                     supports_sarif: true,
+                    comment_scoped: false,
                     coordinate_system: CoordinateSystem::tree_sitter(),
                 },
                 runs: AtomicUsize::new(0),

@@ -40,6 +40,11 @@ pub struct Capabilities {
     pub supports_incremental: bool,
     /// Whether the tool can emit SARIF (mapped by the generic ingester).
     pub supports_sarif: bool,
+    /// Whether this provider's findings count **only inside a comment span** — a
+    /// secret in a comment, not in code. A hit landing outside every extracted
+    /// comment is dropped at fusion (never surfaced as unattached). gitleaks opts
+    /// in so Commenter-Cat stays on its one job: comment intelligence (Idea §5).
+    pub comment_scoped: bool,
     /// The tool's declared coordinate convention (Idea §5; converted via Phase 3).
     pub coordinate_system: CoordinateSystem,
 }

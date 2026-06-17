@@ -43,6 +43,9 @@ impl EslintProvider {
             supports_fix: true,
             supports_incremental: false,
             supports_sarif: false,
+            // eslint lints code, not just comments (Idea §5: comment-scoping is
+            // gitleaks' secrets-in-comments opt-in, not a general default).
+            comment_scoped: false,
             // eslint reports 1-based UTF-16 columns (Idea §5).
             coordinate_system: CoordinateSystem::eslint(),
         };

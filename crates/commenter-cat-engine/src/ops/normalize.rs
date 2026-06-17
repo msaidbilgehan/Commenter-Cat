@@ -38,11 +38,24 @@ fn attaches_to(comment: &Comment, finding: &Finding) -> bool {
             return true;
         }
     }
-    // A provider finding usually carries a zero-width point (line+column → one
-    // byte), so attach when that point sits within the comment — including its
-    // first byte, where `overlaps` alone would miss ruff's `ERA001` on the `#`.
-    // Keep `overlaps` for wide findings that start before the comment.
-    comment.range.contains_byte(finding.range.start_byte) || comment.range.overlaps(&finding.range)
+    within_comment_span(comment, finding)
+}
+
+/// Whether `finding`'s source location lies **inside** `comment`'s span — the pure
+/// location test, independent of bound-symbol attachment.
+///
+/// A provider finding usually carries a zero-width point (line+column → one byte),
+/// so this attaches when that point sits within the comment — including its first
+/// byte, where strict `overlaps` alone would miss ruff's `ERA001` on the `#`;
+/// `overlaps` still covers wide findings that start before the comment. It is the
+/// predicate a **comment-scoped** provider (gitleaks) is filtered by at fusion: a
+/// secret counts only when it sits *in a comment* (Idea §5). Because "kept by this
+/// predicate" implies "attaches here", such findings never leak out as unattached.
+#[must_use]
+pub fn within_comment_span(comment: &Comment, finding: &Finding) -> bool {
+    comment.path == finding.file
+        && (comment.range.contains_byte(finding.range.start_byte)
+            || comment.range.overlaps(&finding.range))
 }
 
 /// Dedups each comment's findings into canonical order (Idea §5 — same drift seen

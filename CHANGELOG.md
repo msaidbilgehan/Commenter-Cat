@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comment kind classification (line, block, docstring, shebang, license, encoding-decl, directive)
 - Unified `Finding` model normalizing ruff, eslint, shellcheck, and gitleaks output into one schema
 - Manifest-first provider platform (declarative TOML adapters) with eslint as the Tier-2 native exception
+- `comment_scoped` provider capability: a tool's findings count only when they sit inside an extracted comment span. gitleaks opts in so a secret surfaces only when it is *in a comment* (a key in a `# TODO`, a token in commented-out code) — hits in code or build artifacts (`target/`) are dropped at fusion and never surfaced as unattached, and the run-state is recomputed from survivors so an all-code run reads `EMPTY` instead of a misleading `SUCCESS`
 - Native blame-skew rot candidates and cross-language marker triage (TODO/FIXME/HACK/...)
 - Parse-invariant safe-apply: comment-only edits assert the code tree is byte-identical or abort
 - Write-protection by kind for behavior-bearing comments (directives, shebang, encoding-decl)

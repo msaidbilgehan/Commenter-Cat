@@ -53,6 +53,12 @@ Version/edition/MSRV are workspace-inherited — bump in the root `Cargo.toml`
 - Built-in providers **are manifests** (`crates/commenter-cat-engine/assets/providers/*.manifest.toml`,
   `include_str!`-embedded), loaded exactly like user adapters. For most provider changes, edit
   the TOML — not Rust. eslint is the one Tier-2 native exception (its Node stack).
+- **gitleaks is comment-scoped** (`comment_scoped = true` capability): a secret surfaces only
+  when it sits *inside a comment* (a key in a `# TODO`, a token in commented-out code). Hits
+  out in code or build artifacts are dropped at fusion (never surfaced as unattached), and the
+  run-state is recomputed from survivors — so an all-code run reads `EMPTY`, not a misleading
+  `SUCCESS`. The veto is location-only (`within_comment_span`, the attach-by-location predicate),
+  so a kept finding always attaches. Any manifest can opt in; `PARTIAL`/`SKIPPED` pass through.
 - **Exit code is not the run signal** — linters exit nonzero merely on findings. Parsed JSON =
   ran; malformed/crash = `PARTIAL` (findings unavailable ≠ zero). See `provider/run_state.rs`.
 

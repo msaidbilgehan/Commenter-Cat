@@ -1,6 +1,13 @@
-# Built-in gitleaks provider (Idea §5 dogfooding) — secrets.
+# Built-in gitleaks provider — secrets, scoped to comments.
 # Every gitleaks hit is a `secret` (always critical, by the category anchor), so
 # `default_category` covers all rule ids without an enumerated map.
+#
+# On-brand scope (`comment_scoped = true`): Commenter-Cat is a comment-intelligence
+# engine, so a gitleaks hit only surfaces when the secret sits *inside a comment* —
+# a key pasted into a `# TODO`, a token left in commented-out code. A hit out in
+# code (or in a build artifact like target/) is dropped at fusion, never surfaced.
+# For a whole-repo secret scan, run gitleaks directly; here it earns its place
+# solely on secrets-in-comments, which no plain scanner frames as such.
 #
 # Invocation notes (gitleaks 8.x):
 #  * `dir` is the modern no-git scan; the legacy `detect` ignored positional
@@ -8,7 +15,8 @@
 #  * `--report-path -` writes the JSON report to stdout. `/dev/stdout` is
 #    rejected ("report path is not writable") on macOS, so `-` is required.
 #  * gitleaks takes a single `[path]`, so it scans `{root}` (project scope);
-#    Commenter-Cat then drops any finding outside the in-scope file set (ops::check).
+#    Commenter-Cat then drops every hit outside `commenter_cat_scope` AND outside
+#    every comment span (ops::check fusion).
 #  * `--no-banner` keeps the ASCII banner off stderr; stdout stays pure JSON.
 manifest_version = 1
 command = ["gitleaks", "dir", "--report-format", "json", "--report-path", "-", "--no-banner", "{root}"]
@@ -25,4 +33,5 @@ line = "$.StartLine"
 column = "$.StartColumn"
 
 [capabilities]
+comment_scoped = true
 coordinate_system = "1-based-utf8"
