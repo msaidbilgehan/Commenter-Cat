@@ -491,13 +491,24 @@ coordinate_system = "1-based-utf8"
     #[test]
     fn test_build_args_expands_root_token() {
         let provider = ManifestProvider::from_toml("gitleaks", ROOT_SCOPED).unwrap();
-        let args = provider.build_args(&[PathBuf::from("ignored.py")], Path::new("/repo/here"));
-        // `{root}` → the single scan root; `{files}` is absent, so the file list
-        // is not appended (gitleaks takes one path, not a list).
-        assert_eq!(
-            args,
-            vec!["gitleaks", "dir", "--report-path", "-", "/repo/here"]
-        );
+        let root = Path::new("/repo/here");
+        let args = provider.build_args(&[PathBuf::from("ignored.py")], root);
+        // `{root}` → the single scan root (absolutized by `build_args`); `{files}`
+        // is absent, so the file list is not appended (gitleaks takes one path, not
+        // a list). `/repo/here` is already absolute on Unix but drive-relative on
+        // Windows, so derive the expected root the same way to stay portable.
+        let abs_root = std::path::absolute(root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let expected = vec![
+            "gitleaks".to_owned(),
+            "dir".to_owned(),
+            "--report-path".to_owned(),
+            "-".to_owned(),
+            abs_root,
+        ];
+        assert_eq!(args, expected);
     }
 
     #[test]
