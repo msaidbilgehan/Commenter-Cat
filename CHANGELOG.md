@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git cache-warmer hooks (`commenter-cat install-hooks`) and CI integration with a two-key artifact cache
 - `comment-to-issue` backend (GitHub via `gh`), idempotent on stable comment identity
 - Layered configuration via `commenter-cat.toml`, an XDG global, and `COMMENTER_CAT_*` environment overrides
+- One-command setup for Claude — `scripts/install.sh` builds + installs the `commenter-cat` binary and registers the `commenter-cat mcp` server (user scope by default, or `--scope project`), via the `claude` CLI when present else a safe, backed-up, atomic config merge; a committable `.mcp.json` wires the server for this repo
 
 ### Changed
 

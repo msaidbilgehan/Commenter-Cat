@@ -140,6 +140,31 @@ an operational error.
    `# noqa` / `// eslint-disable` / `# type: ignore`, shebangs, encoding declarations) require
    an explicit `--allow-significant` acknowledgment.
 
+## Use with Claude (MCP)
+
+The MCP surface — driven live by a coding agent — is the product. Wire it into Claude
+(Claude Code / Desktop) with the one-command installer:
+
+```sh
+scripts/install.sh                  # build + install the binary, register for all projects
+scripts/install.sh --scope project  # register for this repo only (writes ./.mcp.json)
+scripts/install.sh --no-build       # just (re)register the MCP server
+```
+
+It builds and installs the `commenter-cat` binary, then registers the `commenter-cat mcp`
+server — via the `claude` CLI when present, otherwise a safe config merge (existing servers
+preserved, original backed up, written atomically). The repo also ships a committable
+`.mcp.json` that wires the server for this project:
+
+```json
+{ "mcpServers": { "commenter-cat": { "command": "commenter-cat", "args": ["mcp"] } } }
+```
+
+`commenter-cat mcp` is a **stdio** server: Claude spawns it per session (not a daemon), and
+the per-project SQLite cache under `.commenter-cat/` carries state across spawns. After
+registering, reload Claude and run `/mcp` to confirm `commenter-cat` is connected — the agent
+then drives `query` · `context` · `check` · `candidates` · `apply-edit` · `remove`.
+
 ## Configuration
 
 Configuration is discovered automatically, nearest-first:

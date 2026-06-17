@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "commenter-cat": {
+      "command": "commenter-cat",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
