@@ -107,14 +107,25 @@ PY
 fi
 ok "MCP server '$SERVER_NAME' registered ($SCOPE scope)"
 
-# 5. Smoke-test the MCP handshake --------------------------------------------
-say "Verifying the server responds to an initialize handshake…"
-INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"install","version":"0"}}}'
-RESP="$(printf '%s\n' "$INIT" | "$BIN" mcp 2>/dev/null | head -1 || true)"
-if printf '%s' "$RESP" | grep -q '"serverInfo"'; then
-  ok "MCP handshake OK"
-else
+# 5. Smoke-test the MCP handshake + tool listing -----------------------------
+# A successful handshake is necessary but NOT sufficient: a server can connect
+# yet return a tools/list that strict clients (Claude Code, the Anthropic API)
+# reject — e.g. tool inputSchemas lacking a JSON-Schema object "type", which
+# silently drops the entire tool list. Exercise both so the installer's "OK"
+# means the agent can actually see the tools.
+say "Verifying the server responds to initialize + tools/list…"
+REQ_INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"install","version":"0"}}}'
+REQ_INITD='{"jsonrpc":"2.0","method":"notifications/initialized"}'
+REQ_LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+RESP="$(printf '%s\n%s\n%s\n' "$REQ_INIT" "$REQ_INITD" "$REQ_LIST" | "$BIN" mcp 2>/dev/null || true)"
+if ! printf '%s' "$RESP" | grep -q '"serverInfo"'; then
   warn "could not verify the handshake (the server may still be fine)"
+elif printf '%s' "$RESP" | grep -q '"title":"AnyValue"'; then
+  warn "tools/list returned input schemas with no object \"type\" — strict clients (Claude Code) reject these and the agent sees no tools. Rebuild from a version that types the MCP tool parameters."
+elif printf '%s' "$RESP" | grep -q '"inputSchema"'; then
+  ok "MCP handshake + tools/list OK"
+else
+  warn "handshake OK but tools/list returned no tools"
 fi
 
 # 6. Next steps ---------------------------------------------------------------
