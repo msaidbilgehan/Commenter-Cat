@@ -244,6 +244,8 @@ fn from_env_with(get_env: &impl Fn(&str) -> Option<String>) -> CommenterCatResul
         scan: Some(scan),
         providers: Some(providers),
         markers: Some(markers),
+        // No env overrides for the `[rot]` detectors; they configure via TOML only.
+        rot: None,
         severity: Some(severity),
         search: Some(search),
         output: Some(output),

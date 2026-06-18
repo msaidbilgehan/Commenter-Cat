@@ -37,11 +37,17 @@ pub enum Category {
     Directive,
     /// A native blame-skew rot candidate (Idea §3, §9).
     RotCandidate,
+    /// A comment reference (`` `backtick` ``, `:func:`, "see X") that resolves to
+    /// no in-repo symbol — a dangling cross-reference (native silent-rot, Idea §3).
+    ReferenceStale,
+    /// A file path named in a comment that does not exist on disk (native
+    /// silent-rot, Idea §3).
+    PathMissing,
 }
 
 impl Category {
     /// Every category, in canonical order.
-    pub const ALL: [Category; 11] = [
+    pub const ALL: [Category; 13] = [
         Category::DocMissing,
         Category::DocDrift,
         Category::DocStyle,
@@ -53,6 +59,8 @@ impl Category {
         Category::Shebang,
         Category::Directive,
         Category::RotCandidate,
+        Category::ReferenceStale,
+        Category::PathMissing,
     ];
 
     /// The snake_case config/CLI token (matches the serde form).
@@ -70,6 +78,8 @@ impl Category {
             Category::Shebang => "shebang",
             Category::Directive => "directive",
             Category::RotCandidate => "rot_candidate",
+            Category::ReferenceStale => "reference_stale",
+            Category::PathMissing => "path_missing",
         }
     }
 
@@ -90,7 +100,9 @@ impl Category {
             Category::CommentedCode
             | Category::DocMissing
             | Category::MarkerStale
-            | Category::Shebang => Severity::Warning,
+            | Category::Shebang
+            | Category::ReferenceStale
+            | Category::PathMissing => Severity::Warning,
             Category::DocStyle
             | Category::TodoFormat
             | Category::CommentStyle
@@ -136,11 +148,19 @@ mod tests {
         assert_eq!(Category::TodoFormat.canonical_severity(), Severity::Info);
         assert_eq!(Category::CommentStyle.canonical_severity(), Severity::Info);
         assert_eq!(Category::RotCandidate.canonical_severity(), Severity::Info);
+        assert_eq!(
+            Category::ReferenceStale.canonical_severity(),
+            Severity::Warning
+        );
+        assert_eq!(
+            Category::PathMissing.canonical_severity(),
+            Severity::Warning
+        );
     }
 
     #[test]
     fn test_every_category_has_an_anchor() {
-        // Exhaustiveness guard: the match above must cover all 11.
+        // Exhaustiveness guard: the match above must cover all 13.
         for category in Category::ALL {
             let _ = category.canonical_severity();
         }

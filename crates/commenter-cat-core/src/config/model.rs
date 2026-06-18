@@ -38,6 +38,23 @@ const DEFAULT_TYPESCRIPT_PROVIDER: &str = "eslint";
 const DEFAULT_SHELL_PROVIDER: &str = "shellcheck";
 const DEFAULT_SECRETS_PROVIDER: &str = "gitleaks";
 
+// `[rot]` — the native silent-rot detectors (Idea §3, §9). The four structural
+// detectors default **on** (deterministic, low-false-positive); the embedding-
+// gated semantic detector defaults **off** until a dogfood pass proves it
+// low-noise (4-Context.md "Default Detector Posture").
+const DEFAULT_REFERENCE_LIVENESS: bool = true;
+const DEFAULT_SIGNATURE_CONTRACT: bool = true;
+const DEFAULT_PATH_EXISTENCE: bool = true;
+const DEFAULT_GIT_DRIFT: bool = true;
+const DEFAULT_SEMANTIC_CONTRADICTION: bool = false;
+/// Git-drift only flags when the bound code's blame is newer than the comment's
+/// by more than this many days, cutting churn noise (6-Risks.md Q3).
+const DEFAULT_GIT_DRIFT_AGE_THRESHOLD_DAYS: u32 = 30;
+/// Semantic contradiction surfaces only when the comment-vs-code alignment
+/// score (a deterministic integer in `0..=100`, never a float — general.md
+/// `TIME_FLOAT_EPOCH`) falls **below** this conservative cutoff.
+const DEFAULT_SEMANTIC_CONFIDENCE_THRESHOLD: u32 = 35;
+
 // --- Scalar enums ------------------------------------------------------------
 
 /// Behavior when a configured provider binary is absent (Idea §5, §12).
@@ -174,6 +191,8 @@ pub struct ConfigFile {
     pub providers: Option<ProvidersSection>,
     /// `[markers]` — custom markers and their severities.
     pub markers: Option<MarkersSection>,
+    /// `[rot]` — native silent-rot detector toggles and thresholds.
+    pub rot: Option<RotSection>,
     /// `[severity]` — canonical-severity overrides plus the CI `fail_on` gate.
     pub severity: Option<SeveritySection>,
     /// `[search]` — embedding backend selection.
@@ -257,6 +276,47 @@ impl MergeOver for MarkersSection {
     }
 }
 
+/// Partial `[rot]` table — per-detector enable flags and thresholds for the
+/// native silent-rot detectors (Idea §3, §9). Every field is optional so a layer
+/// expresses only what it overrides.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RotSection {
+    /// Detector 1 — flag comment references (`` `backtick` ``, `:func:`, "see X")
+    /// that resolve to no in-repo symbol.
+    pub reference_liveness: Option<bool>,
+    /// Detector 2 — diff a docstring's `Args:`/`Returns:`/`Raises:` (or JSDoc
+    /// `@param`) against the real function signature.
+    pub signature_contract: Option<bool>,
+    /// Detector 3 — flag a file path named in a comment that does not exist.
+    pub path_existence: Option<bool>,
+    /// Detector 4 — flag a comment whose blame predates its bound code's blame.
+    pub git_drift: Option<bool>,
+    /// Detector 5 — flag low comment-vs-code embedding alignment (default off).
+    pub semantic_contradiction: Option<bool>,
+    /// Minimum code-newer-than-comment age, in days, before git-drift fires.
+    pub git_drift_age_threshold_days: Option<u32>,
+    /// Alignment-score cutoff (`0..=100`) below which semantic contradiction fires.
+    pub semantic_confidence_threshold: Option<u32>,
+}
+
+impl MergeOver for RotSection {
+    fn merge_over(self, base: Self) -> Self {
+        Self {
+            reference_liveness: self.reference_liveness.or(base.reference_liveness),
+            signature_contract: self.signature_contract.or(base.signature_contract),
+            path_existence: self.path_existence.or(base.path_existence),
+            git_drift: self.git_drift.or(base.git_drift),
+            semantic_contradiction: self.semantic_contradiction.or(base.semantic_contradiction),
+            git_drift_age_threshold_days: self
+                .git_drift_age_threshold_days
+                .or(base.git_drift_age_threshold_days),
+            semantic_confidence_threshold: self
+                .semantic_confidence_threshold
+                .or(base.semantic_confidence_threshold),
+        }
+    }
+}
+
 /// Partial `[severity]` table: the reserved `fail_on` gate plus a flattened map
 /// of canonical-severity overrides keyed by rule id, category, or origin
 /// (Idea §5).
@@ -319,6 +379,7 @@ impl MergeOver for ConfigFile {
             scan: merge_opt(self.scan, base.scan),
             providers: merge_opt(self.providers, base.providers),
             markers: merge_opt(self.markers, base.markers),
+            rot: merge_opt(self.rot, base.rot),
             severity: merge_opt(self.severity, base.severity),
             search: merge_opt(self.search, base.search),
             output: merge_opt(self.output, base.output),
@@ -338,6 +399,7 @@ impl ConfigFile {
         let scan = self.scan.unwrap_or_default();
         let providers = self.providers.unwrap_or_default();
         let markers = self.markers.unwrap_or_default();
+        let rot = self.rot.unwrap_or_default();
         let severity = self.severity.unwrap_or_default();
         let search = self.search.unwrap_or_default();
         let output = self.output.unwrap_or_default();
@@ -375,6 +437,21 @@ impl ConfigFile {
                 custom: markers.custom.unwrap_or_default(),
                 severity: markers.severity.unwrap_or_default(),
             },
+            rot: RotConfig {
+                reference_liveness: rot.reference_liveness.unwrap_or(DEFAULT_REFERENCE_LIVENESS),
+                signature_contract: rot.signature_contract.unwrap_or(DEFAULT_SIGNATURE_CONTRACT),
+                path_existence: rot.path_existence.unwrap_or(DEFAULT_PATH_EXISTENCE),
+                git_drift: rot.git_drift.unwrap_or(DEFAULT_GIT_DRIFT),
+                semantic_contradiction: rot
+                    .semantic_contradiction
+                    .unwrap_or(DEFAULT_SEMANTIC_CONTRADICTION),
+                git_drift_age_threshold_days: rot
+                    .git_drift_age_threshold_days
+                    .unwrap_or(DEFAULT_GIT_DRIFT_AGE_THRESHOLD_DAYS),
+                semantic_confidence_threshold: rot
+                    .semantic_confidence_threshold
+                    .unwrap_or(DEFAULT_SEMANTIC_CONFIDENCE_THRESHOLD),
+            },
             severity: SeverityConfig {
                 fail_on: severity.fail_on.unwrap_or(DEFAULT_FAIL_ON),
                 overrides: severity.overrides,
@@ -403,6 +480,8 @@ pub struct ResolvedConfig {
     pub providers: ProvidersConfig,
     /// Resolved `[markers]` settings.
     pub markers: MarkersConfig,
+    /// Resolved `[rot]` settings.
+    pub rot: RotConfig,
     /// Resolved `[severity]` settings.
     pub severity: SeverityConfig,
     /// Resolved `[search]` settings.
@@ -472,6 +551,29 @@ pub struct MarkersConfig {
     pub custom: Vec<String>,
     /// Per-marker canonical severity.
     pub severity: BTreeMap<String, Severity>,
+}
+
+/// Resolved `[rot]` settings — the native silent-rot detector posture
+/// (Idea §3, §9). The four structural detectors default on; the embedding-gated
+/// semantic detector defaults off (4-Context.md "Default Detector Posture").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RotConfig {
+    /// Detector 1 — reference-liveness.
+    pub reference_liveness: bool,
+    /// Detector 2 — docstring↔signature contract.
+    pub signature_contract: bool,
+    /// Detector 3 — path/identifier existence.
+    pub path_existence: bool,
+    /// Detector 4 — git blame-skew drift.
+    pub git_drift: bool,
+    /// Detector 5 — semantic contradiction (default off).
+    pub semantic_contradiction: bool,
+    /// Minimum code-newer-than-comment age, in days, before git-drift fires.
+    pub git_drift_age_threshold_days: u32,
+    /// Alignment-score cutoff (`0..=100`) below which semantic contradiction
+    /// fires. An integer bucket, never a float compare (general.md
+    /// `TIME_FLOAT_EPOCH`).
+    pub semantic_confidence_threshold: u32,
 }
 
 /// Resolved `[severity]` settings.
@@ -586,6 +688,50 @@ mod tests {
             Some(&Severity::Info)
         );
         assert_eq!(cfg.severity.fail_on, Severity::Error);
+        // The `[rot]` block round-trips: semantic stays opt-in, drift age tuned.
+        assert!(cfg.rot.reference_liveness);
+        assert!(cfg.rot.semantic_contradiction);
+        assert_eq!(cfg.rot.git_drift_age_threshold_days, 14);
+    }
+
+    #[test]
+    fn test_rot_defaults_structural_on_semantic_off() {
+        // 4-Context.md "Default Detector Posture": the four structural detectors
+        // default on; the embedding-gated semantic detector defaults off.
+        let rot = ResolvedConfig::default().rot;
+        assert!(rot.reference_liveness);
+        assert!(rot.signature_contract);
+        assert!(rot.path_existence);
+        assert!(rot.git_drift);
+        assert!(!rot.semantic_contradiction, "semantic defaults off");
+        assert_eq!(rot.git_drift_age_threshold_days, 30);
+        assert_eq!(rot.semantic_confidence_threshold, 35);
+    }
+
+    #[test]
+    fn test_rot_section_overrides_merge_over_defaults() {
+        // A layer that disables git-drift and turns semantic on overrides only
+        // those fields; the rest fall back to the documented defaults.
+        let section: RotSection = toml::from_str(
+            r#"
+            git_drift = false
+            semantic_contradiction = true
+            git_drift_age_threshold_days = 7
+            "#,
+        )
+        .unwrap();
+        let rot = ConfigFile {
+            rot: Some(section),
+            ..Default::default()
+        }
+        .resolve()
+        .rot;
+        assert!(!rot.git_drift, "explicit override wins");
+        assert!(rot.semantic_contradiction, "explicit override wins");
+        assert_eq!(rot.git_drift_age_threshold_days, 7);
+        // Untouched fields keep their defaults.
+        assert!(rot.reference_liveness);
+        assert_eq!(rot.semantic_confidence_threshold, 35);
     }
 
     #[test]
@@ -623,6 +769,15 @@ docstring_convention = "google"
 [markers]
 custom = ["SECURITY", "DO_NOT_MERGE"]
 severity = { SECURITY = "error", DO_NOT_MERGE = "critical" }
+
+[rot]
+reference_liveness = true
+signature_contract = true
+path_existence = true
+git_drift = true
+semantic_contradiction = true
+git_drift_age_threshold_days = 14
+semantic_confidence_threshold = 30
 
 [severity]
 doc_missing = "error"

@@ -24,6 +24,7 @@ pub use discovery::{
 };
 pub use model::{
     ConfigFile, EmbeddingsMode, MarkersConfig, MarkersSection, MergeOver, OnMissing, OutputConfig,
-    OutputFormat, OutputSection, ProvidersConfig, ProvidersSection, ResolvedConfig, ScanConfig,
-    ScanSection, SearchConfig, SearchSection, SeverityConfig, SeveritySection,
+    OutputFormat, OutputSection, ProvidersConfig, ProvidersSection, ResolvedConfig, RotConfig,
+    RotSection, ScanConfig, ScanSection, SearchConfig, SearchSection, SeverityConfig,
+    SeveritySection,
 };
