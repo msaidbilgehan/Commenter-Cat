@@ -18,6 +18,7 @@ use commenter_cat_core::finding::coordinates::CoordinateSystem;
 use commenter_cat_core::finding::{
     resolve_severity, Category, Finding, FindingTarget, Fix, Origin, Range,
 };
+use commenter_cat_core::lang::Language;
 use commenter_cat_core::symbol::BoundSymbol;
 
 use super::node_runtime::{NodeRuntime, ReproducibilityLevel};
@@ -26,6 +27,10 @@ use crate::walk::to_repo_relative;
 
 /// The provider id.
 const ID: &str = "eslint";
+
+/// The languages eslint handles (Idea §5) — the orchestrator narrows its file
+/// set to these, so it never lints a `.py`/`.sh` file.
+const LANGUAGES: [Language; 2] = [Language::TypeScript, Language::JavaScript];
 
 /// The eslint Tier-2 native provider.
 pub struct EslintProvider {
@@ -169,6 +174,10 @@ impl RuleProvider for EslintProvider {
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    fn languages(&self) -> &[Language] {
+        &LANGUAGES
     }
 
     fn run(&self, files: &[PathBuf], context: &ProviderContext<'_>) -> ProviderRun {

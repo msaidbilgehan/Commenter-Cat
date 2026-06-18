@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use commenter_cat_core::finding::coordinates::CoordinateSystem;
 use commenter_cat_core::finding::Finding;
+use commenter_cat_core::lang::Language;
 use commenter_cat_core::severity::Severity;
 
 use super::run_state::RunState;
@@ -119,8 +120,20 @@ pub trait RuleProvider {
     /// The provider's declared capabilities.
     fn capabilities(&self) -> &Capabilities;
 
-    /// Runs over `files` (already narrowed to `effective_scope`), producing
-    /// normalized findings and a run state.
+    /// The source languages this provider handles (Idea §5). The orchestrator
+    /// narrows each provider's file set to these *before* invocation, so a tool
+    /// only ever sees files it can lint — shellcheck never receives a `.py` file
+    /// (the dogfooded SC2148-on-Python bug). An empty slice means **no affinity**:
+    /// every walked file — a user adapter that declares none, and project/`{root}`
+    /// tools like gitleaks that ignore the explicit list. The default is empty.
+    fn languages(&self) -> &[Language] {
+        &[]
+    }
+
+    /// Runs over `files` (already narrowed to `effective_scope` and the provider's
+    /// declared [`languages`]), producing normalized findings and a run state.
+    ///
+    /// [`languages`]: RuleProvider::languages
     fn run(&self, files: &[PathBuf], context: &ProviderContext<'_>) -> ProviderRun;
 
     /// A cache-invalidation key for this provider's results (Idea §6) — combining

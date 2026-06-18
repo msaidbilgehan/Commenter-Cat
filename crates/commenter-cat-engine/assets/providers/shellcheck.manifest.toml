@@ -6,6 +6,10 @@ manifest_version = 1
 command = ["shellcheck", "--format=json", "{files}"]
 format = "json"
 scope = "file"
+# Shell only — without this the orchestrator handed shellcheck every walked file,
+# so it lint-flagged .py/.ts/.js as shell (SC2148: "add a shebang"), 793 false
+# positives recommending a wrong fix. Now it sees shell files or SKIPs (dogfood).
+languages = ["shell"]
 keep_only_mapped = true
 
 [[findings]]

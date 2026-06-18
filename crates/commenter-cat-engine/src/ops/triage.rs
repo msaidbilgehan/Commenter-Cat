@@ -74,8 +74,11 @@ fn marker_range(comment: &Comment, marker: &str) -> Range {
     )
 }
 
-/// Builds a native finding anchored to `range` within a comment.
-fn native_finding(
+/// Builds a native finding anchored to `range` within a comment (`origin =
+/// Native`, `fix = AgentOnly`). Shared with the `rot` detectors so every native
+/// finding has one construction site (Idea §9: a token-free shortlist, never a
+/// verdict).
+pub(crate) fn native_finding(
     comment: &Comment,
     range: Range,
     category: Category,

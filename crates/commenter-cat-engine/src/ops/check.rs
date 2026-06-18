@@ -15,15 +15,21 @@ use commenter_cat_core::config::ResolvedConfig;
 use commenter_cat_core::error::{CommenterCatError, CommenterCatResult};
 use commenter_cat_core::finding::Finding;
 use commenter_cat_core::identity::cosmetic_fingerprint;
+use commenter_cat_core::lang::Language;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
+use crate::embed::DeterministicEmbedder;
 use crate::extract::coalesce::coalesce;
 use crate::extract::extract_source;
+use crate::git::{enrich, BlameIndex, Repo};
 use crate::map::map_comments;
 use crate::markers::MarkerSet;
 use crate::ops::{baseline, normalize, provider_cache, suppress, triage};
 use crate::provider::{ProviderContext, RuleProvider, RunState};
+use crate::rot::path_ref::RepoPaths;
+use crate::rot::{rot_pass, FileSource};
 use crate::walk::{walk, walk_universe, WalkOptions, WalkedFile};
+use commenter_cat_core::config::RotConfig;
 
 /// Per-stage wall-clock breakdown of a `commenter-cat check` run, surfaced by `--stats`
 /// (Idea §6 — the budget *shape*: warm interactive, cold provider-bound). These
@@ -84,14 +90,31 @@ pub fn check(
     let walked = walk(root, &scan_options)?;
     let walk_only = walk_start.elapsed();
     let native_start = Instant::now();
-    let comments = native_pass(root, config, &walked)?;
+    let (mut comments, file_sources) = native_pass(root, config, &walked)?;
+    // Git enrichment (stage 2.6): joins blame onto each comment and yields the
+    // BlameIndex the git-drift detector reads. A missing/empty repo degrades to
+    // an empty index, never an error (Idea §5).
+    let blames = blame_index(root, &mut comments);
     let native_time = native_start.elapsed();
-    let files: Vec<PathBuf> = walked.iter().map(|file| file.path.clone()).collect();
+    // Carry each file's language so the orchestrator can narrow per provider
+    // (Idea §5): shellcheck gets shell files, ruff gets python, etc.
+    let files: Vec<(PathBuf, Language)> = walked
+        .iter()
+        .map(|file| (file.path.clone(), file.language))
+        .collect();
     let universe_start = Instant::now();
     let universe = walk_universe(root, &scan_options)?;
     let walk_time = walk_only + universe_start.elapsed();
     let mut result = fuse(
-        root, config, comments, files, universe, providers, use_cache,
+        root,
+        config,
+        comments,
+        file_sources,
+        files,
+        universe,
+        &blames,
+        providers,
+        use_cache,
     )?;
     result.timings.walk = walk_time;
     result.timings.native_pass = native_time;
@@ -121,28 +144,36 @@ fn apply_suppression(
 /// comment→code mapping), so it runs across the rayon pool. `walk` returns a
 /// deterministically sorted slice and an indexed parallel `collect` preserves that
 /// order, so the fused comment stream is byte-for-byte identical to a sequential
-/// pass (Idea §11 reproducibility).
+/// pass (Idea §11 reproducibility). Each file's source text is carried back as a
+/// [`FileSource`] so the rot pass can re-parse without a second read.
 fn native_pass(
     root: &Path,
     config: &ResolvedConfig,
     walked: &[WalkedFile],
-) -> CommenterCatResult<Vec<Comment>> {
+) -> CommenterCatResult<(Vec<Comment>, Vec<FileSource>)> {
     let marker_set = MarkerSet::new(&config.markers.custom);
     let per_file = walked
         .par_iter()
         .map(|file| native_pass_file(root, file, &marker_set))
-        .collect::<CommenterCatResult<Vec<Vec<Comment>>>>()?;
-    Ok(per_file.into_iter().flatten().collect())
+        .collect::<CommenterCatResult<Vec<(Vec<Comment>, FileSource)>>>()?;
+    let mut comments = Vec::new();
+    let mut sources = Vec::with_capacity(per_file.len());
+    for (file_comments, source) in per_file {
+        comments.extend(file_comments);
+        sources.push(source);
+    }
+    Ok((comments, sources))
 }
 
 /// Runs one walked file through the native pass: read → extract → coalesce → map
 /// → tag markers. Pure per-file work — no shared mutable state — so it is safe to
-/// fan out across threads (each call builds its own tree-sitter parser).
+/// fan out across threads (each call builds its own tree-sitter parser). Returns
+/// the file's comments and its source text (for the rot pass).
 fn native_pass_file(
     root: &Path,
     file: &WalkedFile,
     marker_set: &MarkerSet,
-) -> CommenterCatResult<Vec<Comment>> {
+) -> CommenterCatResult<(Vec<Comment>, FileSource)> {
     let source = std::fs::read_to_string(&file.path).map_err(|e| {
         CommenterCatError::extract(format!("reading {}", file.path.display())).caused_by(e)
     })?;
@@ -153,30 +184,67 @@ fn native_pass_file(
     for comment in &mut file_comments {
         marker_set.tag(comment);
     }
-    Ok(file_comments)
+    let file_source = FileSource {
+        path: repo_path,
+        language: file.language,
+        text: source,
+    };
+    Ok((file_comments, file_source))
+}
+
+/// Builds the git [`BlameIndex`] for the comments and joins blame onto each
+/// (stage 2.6). Git-drift needs blame, but a missing/empty repository is a
+/// graceful no-op, not a failure (Idea §5): degrade to an empty index and let
+/// git-drift skip.
+fn blame_index(root: &Path, comments: &mut [Comment]) -> BlameIndex {
+    let Ok(repo) = Repo::discover(root) else {
+        return BlameIndex::new();
+    };
+    enrich(&repo, comments).unwrap_or_default()
 }
 
 /// Fuses native + provider findings onto `comments` (Idea §4, §5). Extracted so
 /// it is unit-testable with mock providers, independent of the filesystem walk.
-/// `files` is the comment-language set handed to providers; `universe` is the
-/// `commenter_cat_scope` set (every non-ignored file) provider findings are validated against.
+/// `files` is the comment-language set (each tagged with its language); every
+/// provider is handed only the subset matching its declared languages. `universe`
+/// is the `commenter_cat_scope` set (every non-ignored file) provider findings are
+/// validated against.
+#[allow(clippy::too_many_arguments)]
 fn fuse(
     root: &Path,
     config: &ResolvedConfig,
     mut comments: Vec<Comment>,
-    files: Vec<PathBuf>,
+    file_sources: Vec<FileSource>,
+    files: Vec<(PathBuf, Language)>,
     universe: Vec<String>,
+    blames: &BlameIndex,
     providers: &[&dyn RuleProvider],
     use_cache: bool,
 ) -> CommenterCatResult<CheckResult> {
     let fuse_start = Instant::now();
-    // 1. Native findings (rot + marker triage) attach to their own comment, and
-    //    the cosmetic fingerprint (the §4 identity field) is filled in so the
-    //    persisted record, the baseline diff, and cross-scan identity all have it.
-    for comment in &mut comments {
+    // 1. Native findings attach to their own comment: the silent-rot detectors
+    //    (run once over all comments, in a fixed deterministic order) plus marker
+    //    triage. The cosmetic fingerprint (the §4 identity field) is filled in so
+    //    the persisted record, the baseline diff, and cross-scan identity have it.
+    let rot_findings = if rot_enabled(&config.rot) {
+        let repo_paths = RepoPaths::from_paths(&universe);
+        rot_pass(
+            &comments,
+            &file_sources,
+            &repo_paths,
+            blames,
+            &DeterministicEmbedder,
+            &config.rot,
+        )
+    } else {
+        Vec::new()
+    };
+    for (index, comment) in comments.iter_mut().enumerate() {
         comment.cosmetic_fingerprint = Some(cosmetic_fingerprint(&comment.raw_text));
         let mut native = triage::marker_findings(comment, &config.markers.severity);
-        native.extend(triage::rot_finding(comment));
+        if let Some(rot) = rot_findings.get(index) {
+            native.extend(rot.iter().cloned());
+        }
         comment.findings.extend(native);
     }
 
@@ -185,12 +253,20 @@ fn fuse(
     //    record each run state (Idea §5: state, not exit code).
     let context = ProviderContext::new(root, &config.severity.overrides);
     let providers_start = Instant::now();
-    let cache = provider_cache::ProviderCache::build(root, &files, &universe, providers, use_cache);
+    // The full comment-language path set keys the file-scoped provider cache; each
+    // provider is then handed only the files matching its declared languages.
+    let all_files: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+    let cache =
+        provider_cache::ProviderCache::build(root, &all_files, &universe, providers, use_cache);
     let mut provider_findings = Vec::new();
     let mut run_states = Vec::new();
     let mut cache_stats = provider_cache::CacheStats::default();
     for provider in providers {
-        let (run, was_hit) = cache.run(*provider, &files, &context);
+        // Idea §5: the orchestrator narrows each provider's file set to the
+        // languages it declares, so shellcheck never lints a `.py` file. A
+        // provider whose language has no files here gets an empty set → SKIPPED.
+        let provider_files = files_for_provider(&files, provider.languages());
+        let (run, was_hit) = cache.run(*provider, &provider_files, &context);
         if was_hit {
             cache_stats.hits += 1;
         } else {
@@ -262,6 +338,29 @@ fn fuse(
     })
 }
 
+/// The walked files a provider should receive: those whose language is in its
+/// declared `languages`. An empty `languages` means **no affinity** — every file
+/// (a user adapter that declares none, and project/`{root}` tools like gitleaks
+/// that ignore the explicit list). Idea §5: narrowing is the orchestrator's job,
+/// so a provider never sees a file in a language it cannot lint.
+fn files_for_provider(files: &[(PathBuf, Language)], languages: &[Language]) -> Vec<PathBuf> {
+    files
+        .iter()
+        .filter(|(_, language)| languages.is_empty() || languages.contains(language))
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
+/// Whether any `[rot]` detector is enabled — when all are off the rot pass (and
+/// its symbol-index build) is skipped entirely.
+fn rot_enabled(rot: &RotConfig) -> bool {
+    rot.reference_liveness
+        || rot.signature_contract
+        || rot.path_existence
+        || rot.git_drift
+        || rot.semantic_contradiction
+}
+
 /// The repo-relative, forward-slash path used as a stable comment id component.
 fn repo_relative(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
@@ -273,6 +372,7 @@ fn repo_relative(path: &Path, root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     use super::*;
     use crate::provider::{Capabilities, ProviderRun, Scope};
@@ -756,5 +856,92 @@ mod tests {
         check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
 
         assert_eq!(provider.run_count(), 2, "use_cache=false never caches");
+    }
+
+    /// A file-scoped provider that records the files it was handed, to prove the
+    /// orchestrator narrows by declared language before invocation (Idea §5).
+    struct RecordingProvider {
+        capabilities: Capabilities,
+        languages: Vec<Language>,
+        seen: Mutex<Vec<PathBuf>>,
+    }
+
+    impl RecordingProvider {
+        fn new(languages: Vec<Language>) -> Self {
+            Self {
+                capabilities: Capabilities {
+                    scope: Scope::File,
+                    supports_fix: false,
+                    supports_incremental: true,
+                    supports_sarif: false,
+                    comment_scoped: false,
+                    coordinate_system: CoordinateSystem::tree_sitter(),
+                },
+                languages,
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl RuleProvider for RecordingProvider {
+        fn id(&self) -> &str {
+            "recording"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.capabilities
+        }
+        fn languages(&self) -> &[Language] {
+            &self.languages
+        }
+        fn run(&self, files: &[PathBuf], _ctx: &ProviderContext<'_>) -> ProviderRun {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.extend_from_slice(files);
+            }
+            ProviderRun::ran(Vec::new())
+        }
+    }
+
+    #[test]
+    fn test_orchestrator_narrows_files_to_provider_languages() {
+        // The dogfooded shellcheck bug: a shell-only provider must receive only
+        // shell files, never the `.py` (which would mis-fire SC2148). The orchestrator
+        // narrows by `languages()` before invoking, so the `.py` never reaches it.
+        let repo = TestRepo::new();
+        repo.write("a.py", "# c\nx = 1\n");
+        repo.write("s.sh", "# c\necho hi\n");
+
+        let shell_only = RecordingProvider::new(vec![Language::Shell]);
+        let providers: [&dyn RuleProvider; 1] = [&shell_only];
+        check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
+
+        let seen = shell_only.seen.lock().unwrap();
+        assert_eq!(
+            seen.len(),
+            1,
+            "the shell-only provider received exactly one file"
+        );
+        assert!(
+            seen[0].extension().is_some_and(|ext| ext == "sh"),
+            "and it was the shell file, never the .py: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn test_provider_with_no_language_affinity_sees_every_file() {
+        // A provider that declares no languages (empty) keeps the old behavior:
+        // it is handed every walked file (gitleaks-style project tools rely on this).
+        let repo = TestRepo::new();
+        repo.write("a.py", "# c\nx = 1\n");
+        repo.write("s.sh", "# c\necho hi\n");
+
+        let any = RecordingProvider::new(Vec::new());
+        let providers: [&dyn RuleProvider; 1] = [&any];
+        check(repo.path(), &ResolvedConfig::default(), &providers, false).unwrap();
+
+        assert_eq!(
+            any.seen.lock().unwrap().len(),
+            2,
+            "no declared languages → every file is in scope"
+        );
     }
 }

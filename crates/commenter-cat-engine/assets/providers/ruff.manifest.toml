@@ -6,6 +6,9 @@ manifest_version = 1
 command = ["ruff", "check", "--output-format", "json", "{files}"]
 format = "json"
 scope = "file"
+# Python only — the orchestrator narrows the file list before invoking ruff, so
+# it is never handed shell/JS/TS files it would silently ignore (Idea §5).
+languages = ["python"]
 keep_only_mapped = true
 
 [[findings]]

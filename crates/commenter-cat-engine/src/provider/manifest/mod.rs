@@ -24,6 +24,7 @@ use commenter_cat_core::finding::coordinates::CoordinateSystem;
 use commenter_cat_core::finding::{
     resolve_severity, Category, Finding, FindingTarget, Fix, Origin, Range,
 };
+use commenter_cat_core::lang::Language;
 use commenter_cat_core::severity::Severity;
 use commenter_cat_core::symbol::BoundSymbol;
 use commenter_cat_core::version::manifest_version_is_supported;
@@ -91,6 +92,13 @@ pub struct Manifest {
     pub format: Format,
     /// Invocation scope.
     pub scope: Scope,
+    /// The source languages this adapter handles (Idea §5). The orchestrator
+    /// narrows the file list to these before invoking the tool, so a `{files}`
+    /// tool only sees files it can lint (shellcheck → shell, ruff → python).
+    /// Empty = **no affinity** (every file): the right default for a project-scoped
+    /// `{root}` tool like gitleaks that scans the whole tree regardless.
+    #[serde(default)]
+    pub languages: Vec<Language>,
     /// JSON extraction specs (unused for SARIF).
     #[serde(default)]
     pub findings: Vec<FindingSpec>,
@@ -302,6 +310,10 @@ impl RuleProvider for ManifestProvider {
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    fn languages(&self) -> &[Language] {
+        &self.manifest.languages
     }
 
     fn run(&self, files: &[PathBuf], context: &ProviderContext<'_>) -> ProviderRun {
