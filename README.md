@@ -3,6 +3,43 @@
 [![CI](https://github.com/msaidbilgehan/Commenter-Cat/actions/workflows/ci.yml/badge.svg)](https://github.com/msaidbilgehan/Commenter-Cat/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
+## In plain English
+
+Code changes; the comments around it usually don't. A comment that once described the
+code accurately drifts into a confident lie — the parameter it documents was renamed,
+the file it points to was deleted, the behavior it promises no longer happens.
+
+**Commenter-Cat finds those stale comments.** It reads your code, ties each comment to the
+exact code it describes, and flags the ones that no longer match — plus the usual
+documentation-lint issues from tools like ruff and eslint. Then it hands that list to a
+coding agent (like Claude), which reads, judges, and safely rewrites or deletes each one
+**without ever touching the code itself**.
+
+Think of it as a spell-checker for the *truth* of your comments. The rest of this README
+is the detailed version.
+
+## Quick start
+
+Get Commenter-Cat running inside Claude Code in one command:
+
+```sh
+git clone https://github.com/msaidbilgehan/Commenter-Cat
+cd Commenter-Cat
+scripts/install.sh        # build the binary + register the MCP server (all projects)
+```
+
+`install.sh` builds the `commenter-cat` binary and registers it as an MCP server for Claude
+(idempotent; re-run any time). Reload Claude Code, run `/mcp` to confirm `commenter-cat` is
+connected, then just ask:
+
+> *"Use commenter-cat to find the stale comments in `src/` and fix the clear ones."*
+
+Claude drives the whole **find → understand → judge → fix** loop through the MCP tools — see
+[example prompts](#example-prompts) for more. Prefer the raw CLI, or want to scope it to one
+repo? See [Installation](#installation) and [Use with Claude (MCP)](#use-with-claude-mcp).
+
+## The detailed version
+
 A deterministic, multi-language **comment-intelligence engine** — a Rust orchestrator that
 walks a directory, extracts comments with tree-sitter, **maps each comment to the code it
 annotates**, delegates per-language rule-checking to best-in-class external tools (ruff,
@@ -192,6 +229,21 @@ preserved, original backed up, written atomically). The repo also ships a commit
 the per-project SQLite cache under `.commenter-cat/` carries state across spawns. After
 registering, reload Claude and run `/mcp` to confirm `commenter-cat` is connected — the agent
 then drives `query` · `context` · `check` · `candidates` · `apply-edit` · `remove`.
+
+### Example prompts
+
+Once `/mcp` shows `commenter-cat` connected, just ask in plain language — Claude picks the
+right tools (`query` · `context` · `check` · `candidates` · `apply-edit` · `remove`) and only
+ever edits comments, never the code:
+
+- *"Find the stalest comments in this repo and fix the ones that are clearly wrong."*
+- *"Run a commenter-cat check on `src/auth/` and group the comment findings by severity."*
+- *"Triage the commenter-cat candidates list — for each, say keep / rewrite / delete with a one-line reason."*
+- *"Any docstrings whose parameters no longer match the function signature? Update them to match."*
+- *"Find comments that mention files or symbols that no longer exist, then correct or remove them."*
+- *"Search the index for comments about rate limiting and tell me which ones are out of date."*
+- *"Did I leave a secret in a `# TODO` anywhere? Check the comments for leaked tokens."*
+- *"Accept the current findings as the baseline so CI only flags new comment rot from now on."*
 
 ## Configuration
 
