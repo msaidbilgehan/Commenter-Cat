@@ -1,8 +1,10 @@
 //! The MCP surface (Idea §4a) — THE product.
 //!
 //! MCP tools are **1:1 with the CLI verbs** (one canonical verb set), so an MCP
-//! `check` and a CLI `check` call the *same* engine entry point and return the
-//! *same* record shape. [`McpSurface`] is the transport-agnostic dispatcher
+//! `check` and a CLI `check` drive the *same* engine entry point; the agent
+//! surface then **bounds** its return (Idea §4a — no agent-facing result is a
+//! firehose), summarizing + paginating where the CLI renders the full report.
+//! [`McpSurface`] is the transport-agnostic dispatcher
 //! ([`tools`] is the registry; [`server`] binds it to rmcp over stdio). Read
 //! tools run here; index-backed reads and writes resolve a comment id against
 //! the persisted index and report clearly until a tree is indexed.
@@ -16,6 +18,7 @@ use commenter_cat_core::comment::Comment;
 use commenter_cat_core::config;
 use commenter_cat_core::error::{CommenterCatError, CommenterCatResult};
 use commenter_cat_core::finding::Origin;
+use commenter_cat_core::severity::Severity;
 use serde_json::{json, Value};
 
 use crate::ops::index::{self, Session};
@@ -74,9 +77,24 @@ fn root_from(args: &Value) -> CommenterCatResult<PathBuf> {
     }
 }
 
-/// `check` — the same engine entry point the CLI verb calls (Idea §4a).
+/// `check` — run the analysis, persist the unified records, and return a
+/// **bounded, ranked summary** (Idea §4a: no agent-facing return is a firehose;
+/// the dogfooded `check` dumped ~11M chars on one line and blew the token
+/// ceiling). Findings are ranked actionable-first and capped to `limit`
+/// (default 50) from `cursor` (default 0), with `total`/`truncated`/`cursor`
+/// labels for drilling — the same token economy `candidates` and `query` use.
+/// The full records are persisted to the index, so the agent reads bodies and
+/// bound code via `query`/`context`, never by parsing a megabyte of `check` JSON.
 fn check(args: &Value) -> CommenterCatResult<Value> {
     let root = root_from(args)?;
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(50, |n| n as usize);
+    let offset = args
+        .get("cursor")
+        .and_then(Value::as_u64)
+        .map_or(0, |n| n as usize);
     let config = config::discover(&root)?;
     let providers = builtins::load_all()?;
     let refs: Vec<&dyn RuleProvider> = providers
@@ -92,7 +110,68 @@ fn check(args: &Value) -> CommenterCatResult<Value> {
         .iter()
         .map(|(provider, state)| json!({ "provider": provider, "state": state.as_str() }))
         .collect();
-    Ok(json!({ "comments": result.comments, "run_states": run_states }))
+
+    // Rank every fused finding actionable-first (severity → blame-age → marker
+    // weight), then bound to the budget — the same treatment `candidates` uses.
+    let mut ranked: Vec<(ranking::Priority, Value)> = result
+        .comments
+        .iter()
+        .flat_map(|comment| {
+            let blame_age = comment.git.as_ref().map_or(0, |g| g.committed_unix.max(0));
+            let marker_weight = u32::try_from(comment.markers.len()).unwrap_or(u32::MAX);
+            comment.findings.iter().map(move |finding| {
+                (
+                    ranking::Priority::new(finding.severity, blame_age, marker_weight),
+                    json!({
+                        "file": finding.file,
+                        "line": finding.range.start_line,
+                        "severity": finding.severity.as_str(),
+                        "category": finding.category.as_str(),
+                        "rule": finding.provider_rule_id,
+                        "message": finding.message,
+                    }),
+                )
+            })
+        })
+        .collect();
+    ranking::rank_by(&mut ranked, |(priority, _)| *priority);
+    let findings: Vec<Value> = ranked.into_iter().map(|(_, value)| value).collect();
+    let view = token_economy::bound(
+        findings,
+        &token_economy::Budget::limit(limit),
+        offset,
+        |_| 1,
+    );
+
+    Ok(json!({
+        "summary": {
+            "comments": result.comments.len(),
+            "findings": view.total,
+            "by_severity": severity_histogram(&result),
+            "unattached": result.unattached.len(),
+            "suppressed": result.suppressed.len(),
+        },
+        "run_states": run_states,
+        "total": view.total,
+        "truncated": view.truncated,
+        "cursor": view.cursor.map(|c| c.offset),
+        "findings": view.items,
+    }))
+}
+
+/// A `{critical, error, warning, info}` count over every fused finding, for the
+/// `check` summary — a fixed-shape severity breakdown the agent reads at a glance.
+fn severity_histogram(result: &ops::check::CheckResult) -> Value {
+    let (mut critical, mut error, mut warning, mut info) = (0usize, 0usize, 0usize, 0usize);
+    for finding in result.comments.iter().flat_map(|comment| &comment.findings) {
+        match finding.severity {
+            Severity::Critical => critical += 1,
+            Severity::Error => error += 1,
+            Severity::Warning => warning += 1,
+            Severity::Info => info += 1,
+        }
+    }
+    json!({ "critical": critical, "error": error, "warning": warning, "info": info })
 }
 
 /// `candidates` — the native worklist, ranked actionable-first and token-bounded.
@@ -291,17 +370,47 @@ mod tests {
     }
 
     #[test]
-    fn test_check_tool_returns_same_shape_as_engine() {
+    fn test_check_tool_returns_a_bounded_ranked_summary() {
         let repo = TestRepo::new();
         repo.write("m.py", "# TODO clean up\nx = 1\n");
         let args = json!({ "path": repo.path().to_string_lossy() });
 
         let result = McpSurface::call("check", &args).unwrap();
-        // The MCP result wraps the SAME comment records the engine produced.
-        assert!(result["comments"].is_array());
-        let comments = result["comments"].as_array().unwrap();
-        assert_eq!(comments.len(), 1);
+        // Idea §4a: check returns a bounded summary, never the full record dump.
+        assert!(
+            result["findings"].is_array(),
+            "findings is a ranked, bounded list"
+        );
         assert!(result["run_states"].is_array());
+        assert_eq!(result["summary"]["comments"], 1);
+        // The TODO marker is one finding, surfaced and counted.
+        assert!(result["total"].as_u64().unwrap() >= 1);
+        assert_eq!(result["summary"]["findings"], result["total"]);
+        assert!(
+            result.get("comments").is_none(),
+            "the full-record firehose key is gone"
+        );
+    }
+
+    #[test]
+    fn test_check_findings_are_token_bounded() {
+        let repo = TestRepo::new();
+        repo.write("m.py", "# TODO one\n# FIXME two\n# HACK three\nx = 1\n");
+        let args = json!({ "path": repo.path().to_string_lossy(), "limit": 1 });
+
+        let result = McpSurface::call("check", &args).unwrap();
+        // Several markers found, but the budget caps the returned slice at one.
+        assert!(
+            result["total"].as_u64().unwrap() >= 2,
+            "more findings exist than were returned"
+        );
+        assert_eq!(
+            result["findings"].as_array().unwrap().len(),
+            1,
+            "the budget caps the slice"
+        );
+        assert_eq!(result["truncated"], true, "truncation is labeled");
+        assert!(result["cursor"].is_number(), "a drill cursor is provided");
     }
 
     #[test]

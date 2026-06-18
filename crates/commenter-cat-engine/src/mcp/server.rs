@@ -66,6 +66,13 @@ struct CheckArgs {
     /// Repository root to operate on. Defaults to the server's working directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    /// Maximum findings in the ranked, bounded slice. Defaults to 50. The summary
+    /// counts are always over the full set; this caps only the returned `findings`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
+    /// Drill cursor (offset) returned by a prior page, to fetch the next slice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cursor: Option<u64>,
 }
 
 /// Arguments for `candidates`.
