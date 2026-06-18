@@ -165,6 +165,16 @@ remains here is uniquely ours.
   **predates its bound code's** blame date — code changed after the comment was written. A
   **token-free shortlist** the engine hands an external agent to *judge*. No provider does
   this; it needs our mapping + git join.
+- **Silent-rot detectors (native, unique; see `rot/` and `CLAUDE.md`):** the blame-skew
+  candidate generalizes to five deterministic, agent-judged detectors that catch a comment which
+  *reads like good documentation while making a factual claim about its bound code that is no
+  longer true* — reference-liveness (`rot_ref`), docstring↔signature contract (`rot_signature`),
+  path/identifier existence (`rot_path`), git-drift (`rot_drift`, this candidate with an age
+  threshold), and embedding-gated semantic contradiction (`rot_semantic`). A comment-intent
+  classifier gates them to checkable claims (and quiets the `NOTE`/`WARNING` log-level false
+  positives the dogfooding session flagged). Each reuses our binding + git + embeddings, emits
+  `origin = native` / `fix = agent_only`, and proposes — the agent judges (§9). Configured via a
+  `[rot]` section: the four structural detectors default on, semantic defaults off behind them.
 - **The normalizer:** fuse every provider's findings (§5) + native facts into one record,
   attached to comments by location and `bound_symbol`.
 

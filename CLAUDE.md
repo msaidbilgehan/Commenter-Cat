@@ -62,6 +62,42 @@ Version/edition/MSRV are workspace-inherited — bump in the root `Cargo.toml`
 - **Exit code is not the run signal** — linters exit nonzero merely on findings. Parsed JSON =
   ran; malformed/crash = `PARTIAL` (findings unavailable ≠ zero). See `provider/run_state.rs`.
 
+## Native silent-rot detectors (`rot/`)
+
+- **These are *native*, not providers.** No provider catches *silent rot* — a comment that
+  reads like good documentation while making a factual claim about its bound code that is no
+  longer true. It needs Commenter-Cat's substrate: comment→code binding (`bound_symbol` /
+  `bound_node_range`), the git `BlameIndex`, and the on-device embedder. Five detectors live in
+  `crates/commenter-cat-engine/src/rot/`, each a **pure function over an enriched `Comment`**
+  emitting `origin = Native`, `fix = AgentOnly` findings — a token-free shortlist the agent
+  judges, never a verdict.
+- **The detectors + their rule ids:** reference-liveness (`rot_ref`, `reference.rs`),
+  docstring↔signature contract (`rot_signature`, `signature/`), path/identifier existence
+  (`rot_path`, `path_ref.rs`), git-drift (`rot_drift`, `drift.rs`, the relocated blame-skew),
+  semantic contradiction (`rot_semantic`, `semantic.rs`).
+- **A comment-intent classifier (`intent.rs`) is the shared gate.** It buckets a comment
+  (directive / explanatory-note / log-level-reference / doc-contract) so detectors fire only on
+  checkable claims and the noisy `NOTE`/`WARNING` log-level mentions stay quiet. `DocContract`
+  outranks a leading marker (a docstring with a mid-body `NOTE:` is still a contract); reference
+  and path checks run on every intent except `LogLevelReference`; signature and semantic run only
+  on a `DocContract`.
+- **`rot_pass` (`rot/mod.rs`) is the convergence point**, wired into `ops/check.rs` fusion. It
+  builds the repo-wide symbol index once, then runs the detectors in a **fixed order** — reference,
+  path, git-drift, signature, semantic — feeding the semantic detector `structural_clean` (no
+  structural detector fired) so it never piles onto an already-flagged comment. Order and sorted
+  output are load-bearing for determinism (Idea §11).
+- **`[rot]` config (core `config/model.rs`)** toggles and tunes each detector. The four structural
+  detectors **default on** (deterministic, low-false-positive); **semantic defaults off** until a
+  dogfood pass proves it low-noise, and even on it is gated behind the structural pass and an
+  integer alignment-score threshold (never a float compare). `check` uses the offline
+  `DeterministicEmbedder` so it stays offline and reproducible; the real ONNX assertion is
+  `#[ignore]`d like the existing embedding test.
+- **Graceful degradation, generalized:** a detector that cannot run is a no-op, never a false
+  finding or a crash — no git repo → git-drift skips; embeddings unavailable → semantic skips;
+  unbound comment → reference/signature/semantic skip. Resolution is deliberately *generous*
+  (a dangling reference is only flagged when strongly in-repo-shaped; a path resolves by basename
+  or suffix) so a live symbol is never mis-flagged.
+
 ## Storage
 
 - Two-layer per-project cache at `.commenter-cat/` (`CACHE_DIR_NAME`), **gitignored**:

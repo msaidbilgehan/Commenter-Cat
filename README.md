@@ -27,12 +27,12 @@ find ─▶ understand ─▶ judge ─▶ update ─▶ re-check ─┐
   └─────────────────────────────────────────────────┘
 ```
 
-- **find** — `query` (keyword + semantic search) and `candidates` (a token-free blame-skew
-  rot shortlist) return a ranked, bounded, paginated comment set — never a firehose.
+- **find** — `query` (keyword + semantic search) and `candidates` (a token-free native rot +
+  marker worklist) return a ranked, bounded, paginated comment set — never a firehose.
 - **understand** — `context` returns one comment plus its mapped code window, the unit on
   which the agent judges semantic rot.
-- **rule-check** — `check` runs every provider and the native checks, normalized into one
-  report across all four languages.
+- **rule-check** — `check` runs every provider and the native silent-rot detectors, normalized
+  into one report across all four languages.
 - **update** — `apply-edit` / `remove` land comment-only changes under the **safe-apply
   guarantee** and return the re-checked findings inline, so the loop closes in one call.
 
@@ -54,6 +54,28 @@ walk + ignore ─▶ tree-sitter extract + classify ─▶ coalesce ─▶ map �
 The native pass (walk, extract, map, enrich, index, embed) is pure Rust and ripgrep-class.
 Rule *content* is delegated to external providers and unified into one `Finding` model. The
 only non-Rust runtime is the eslint Node stack, fetched only when JS/TS is in scope.
+
+## Silent-rot detectors
+
+No external linter catches *silent rot* — a comment that reads like good documentation while
+making a claim about its bound code that is no longer true. Commenter-Cat does, natively, because
+it already holds the comment→code binding, git blame, and an on-device embedder. Five
+deterministic detectors run over each comment and the code it maps to:
+
+| Detector | Rule id | Flags |
+|---|---|---|
+| Reference-liveness | `rot_ref` | a symbol named in the comment no longer exists in the repo |
+| Docstring ↔ signature | `rot_signature` | the doc describes parameters the function no longer has |
+| Path existence | `rot_path` | a file or path named in the comment is gone |
+| Git-drift | `rot_drift` | the code moved out from under the comment (blame-skew past an age threshold) |
+| Semantic contradiction | `rot_semantic` | comment and code disagree in meaning (embedding-gated) |
+
+A comment-intent classifier gates them so they fire only on checkable claims, not on `NOTE:` /
+`WARNING:` log-level mentions. Each emits a token-free shortlist (`origin = native`,
+`fix = agent_only`) for the agent to judge — never a verdict. The four structural detectors are
+**on by default**; the noisier semantic one is **opt-in** and runs only behind a clean structural
+pass. A detector that cannot run (no git repo, embeddings unavailable, an unbound comment) is a
+silent no-op, never a false finding. Toggle and tune each under `[rot]` in `commenter-cat.toml`.
 
 ## Installation
 
@@ -107,22 +129,28 @@ commenter-cat context <COMMENT_ID> --with-code   # ...plus the bound code span
 commenter-cat apply-edit <COMMENT_ID> "# updated text"   # parse-invariant edit, re-checked inline
 commenter-cat remove <COMMENT_ID>                         # remove a comment, re-checked inline
 
+commenter-cat baseline accept               # snapshot current findings into the committed baseline
+commenter-cat suppressions export           # write Commenter-Cat's suppressions as native tool directives
+commenter-cat issues sync                   # plan comment↔issue sync (dry-run; --apply to mutate)
+
 commenter-cat doctor                        # list the providers commenter-cat would run + their contract
 commenter-cat install-hooks                 # install the non-fatal git cache-warmer hooks
 commenter-cat mcp                           # serve the MCP protocol over stdio (the agent surface)
 ```
 
 **Global flags** (apply to every verb): `--stats`, `--system-tools` (use tools on `PATH`
-instead of the pinned toolchain), `--hermetic` (require the pinned toolchain), `--show-suppressed`.
+instead of the pinned toolchain), `--hermetic` (require the pinned toolchain), `--show-suppressed`,
+`--no-cache` (bypass the provider-result cache).
 
 `commenter-cat --help` lists every verb. Exit codes: `0` clean · `1` findings at/above the gate · `2`
 an operational error.
 
-> **Partially wired in the CLI:** `commenter-cat baseline accept|prune` is wired — it snapshots/prunes the
-> committed baseline. `commenter-cat suppressions export` and `commenter-cat issues sync` parse but return an explicit
-> "wire deliberately" message: the first mutates source (and depends on a suppression pass `check`
-> does not yet apply), the second is network- and `gh`-backed and outward-facing. Both underlying
-> engine modules exist and are exercised by tests.
+> **Every verb is wired end to end; the two outward-facing ones carry guardrails.**
+> `commenter-cat suppressions export` mutates source — it writes each tool's native directives (`# noqa`,
+> `eslint-disable-next-line`, `# shellcheck disable`, `# gitleaks:allow`) through the parse-invariant
+> applier (a code-altering insert aborts) and is idempotent on the directive marker.
+> `commenter-cat issues sync` is network- and `gh`-backed, so it **defaults to a dry-run plan** and mutates
+> only under `--apply`, with cross-run idempotency from a committed ledger (`commenter-cat.issues.toml`).
 
 ### Output formats
 
@@ -174,7 +202,7 @@ Configuration is discovered automatically, nearest-first:
 2. `commenter-cat.toml` files, walked up from the working directory (nearest wins).
 3. The XDG global config at `$XDG_CONFIG_HOME/commenter-cat/config.toml`.
 
-Sections include `[scan]`, `[providers]`, `[markers]`, `[severity]`, `[search]`, and `[output]`.
+Sections include `[scan]`, `[providers]`, `[markers]`, `[rot]`, `[severity]`, `[search]`, and `[output]`.
 
 **Two project files sit beside the config (both versioned, both outside the cache):**
 
