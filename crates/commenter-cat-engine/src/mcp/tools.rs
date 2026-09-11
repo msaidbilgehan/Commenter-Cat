@@ -1,6 +1,6 @@
 //! The MCP tool registry (Idea §4a) — THE product surface.
 //!
-//! The six primitives, **1:1 with the CLI verbs** (one canonical verb set, two
+//! The primitives, **1:1 with the CLI verbs** (one canonical verb set, two
 //! interfaces). Each tool declares its find/understand/rule-check/update group
 //! and a per-tool **stability tier** (Idea §11): a new capability lands
 //! `Experimental`; agents pin a MAJOR and rely on `Stable` tools.
@@ -36,11 +36,11 @@ pub enum VerbGroup {
     Understand,
     /// `check` — run the analysis.
     RuleCheck,
-    /// `apply_edit`, `remove` — write.
+    /// `apply_edit`, `remove`, `strip` — write.
     Update,
 }
 
-/// The six MCP primitives (Idea §4a), each named exactly like its CLI verb.
+/// The MCP primitives (Idea §4a), each named exactly like its CLI verb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpTool {
     /// FIND: search comments (FTS + vector), ranked + bounded.
@@ -55,17 +55,20 @@ pub enum McpTool {
     ApplyEdit,
     /// UPDATE: remove a comment + inline re-check.
     Remove,
+    /// UPDATE: sweep the tree and strip every comment (dry-run by default).
+    Strip,
 }
 
 impl McpTool {
     /// Every tool, in surface order.
-    pub const ALL: [McpTool; 6] = [
+    pub const ALL: [McpTool; 7] = [
         McpTool::Query,
         McpTool::Context,
         McpTool::Check,
         McpTool::Candidates,
         McpTool::ApplyEdit,
         McpTool::Remove,
+        McpTool::Strip,
     ];
 
     /// The tool name — **identical** to the CLI verb (snake_case for MCP).
@@ -78,6 +81,7 @@ impl McpTool {
             McpTool::Candidates => "candidates",
             McpTool::ApplyEdit => "apply_edit",
             McpTool::Remove => "remove",
+            McpTool::Strip => "strip",
         }
     }
 
@@ -88,7 +92,7 @@ impl McpTool {
             McpTool::Query | McpTool::Candidates => VerbGroup::Find,
             McpTool::Context => VerbGroup::Understand,
             McpTool::Check => VerbGroup::RuleCheck,
-            McpTool::ApplyEdit | McpTool::Remove => VerbGroup::Update,
+            McpTool::ApplyEdit | McpTool::Remove | McpTool::Strip => VerbGroup::Update,
         }
     }
 
@@ -100,7 +104,7 @@ impl McpTool {
             McpTool::Query | McpTool::Context | McpTool::Check | McpTool::Candidates => {
                 Stability::Stable
             }
-            McpTool::ApplyEdit | McpTool::Remove => Stability::Experimental,
+            McpTool::ApplyEdit | McpTool::Remove | McpTool::Strip => Stability::Experimental,
         }
     }
 
@@ -114,6 +118,10 @@ impl McpTool {
             McpTool::Candidates => "The native worklist: rot candidates and ranked markers.",
             McpTool::ApplyEdit => "Apply a parse-invariant comment edit, then re-check inline.",
             McpTool::Remove => "Remove a comment, then re-check inline.",
+            McpTool::Strip => {
+                "Scan the tree and strip every comment, through the parse-invariant applier. \
+                 Returns a dry-run plan; pass apply=true to rewrite the files."
+            }
         }
     }
 
@@ -136,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_tool_names_match_cli_verbs_and_round_trip() {
-        // The six primitives, named exactly as the CLI verbs (Idea §4a).
+        // Every primitive, named exactly as its CLI verb (Idea §4a).
         let names: Vec<&str> = McpTool::ALL.iter().map(|t| t.name()).collect();
         assert_eq!(
             names,
@@ -146,7 +154,8 @@ mod tests {
                 "check",
                 "candidates",
                 "apply_edit",
-                "remove"
+                "remove",
+                "strip"
             ]
         );
         for tool in McpTool::ALL {
@@ -160,6 +169,7 @@ mod tests {
         assert_eq!(McpTool::Check.stability(), Stability::Stable);
         assert_eq!(McpTool::ApplyEdit.stability(), Stability::Experimental);
         assert_eq!(McpTool::Remove.stability(), Stability::Experimental);
+        assert_eq!(McpTool::Strip.stability(), Stability::Experimental);
     }
 
     #[test]
@@ -168,5 +178,6 @@ mod tests {
         assert_eq!(McpTool::Context.group(), VerbGroup::Understand);
         assert_eq!(McpTool::Check.group(), VerbGroup::RuleCheck);
         assert_eq!(McpTool::Remove.group(), VerbGroup::Update);
+        assert_eq!(McpTool::Strip.group(), VerbGroup::Update);
     }
 }

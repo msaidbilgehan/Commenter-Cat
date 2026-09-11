@@ -1,14 +1,15 @@
 //! The clap verb surface (Idea §4a, §10).
 //!
 //! One canonical verb set the CLI and the MCP surface (Phase 8.3) share — the
-//! six primitives (`query`, `context`, `check`, `candidates`, `apply-edit`,
-//! `remove`) organized under find / understand / rule-check / update, plus the
-//! management verbs (`baseline`, `suppressions`, `doctor`, `install-hooks`,
-//! `issues`). The CLI is the canonical surface; MCP tools map 1:1 onto it.
+//! primitives (`query`, `context`, `check`, `candidates`, `apply-edit`,
+//! `remove`, `strip`) organized under find / understand / rule-check / update,
+//! plus the management verbs (`baseline`, `suppressions`, `doctor`,
+//! `install-hooks`, `issues`). The CLI is the canonical surface; MCP tools map
+//! 1:1 onto it.
 //!
 //! `clap` lives only here, never in `commenter-cat-core`/the engine domain — the CLI-side
-//! [`CliFormat`] maps to the engine's `OutputFormat` so the domain stays free of
-//! the parsing framework (`ARCH_LAYER_VIOLATION`).
+//! [`CliFormat`] and [`CliKind`] map to the domain's `OutputFormat` / `CommentKind`
+//! so the domain stays free of the parsing framework (`ARCH_LAYER_VIOLATION`).
 
 pub(crate) mod verbs;
 
@@ -16,6 +17,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use commenter_cat_core::config::OutputFormat;
+use commenter_cat_core::kind::CommentKind;
 
 pub(crate) use verbs::run;
 
@@ -117,6 +119,29 @@ pub(crate) enum Command {
         allow_significant: bool,
     },
 
+    /// UPDATE: scan the tree and strip every comment (dry-run without `--apply`).
+    Strip {
+        /// Root to scan (default: the working directory).
+        path: Option<PathBuf>,
+        /// Actually rewrite the files. Without it, `strip` prints a plan and
+        /// touches nothing.
+        #[arg(long)]
+        apply: bool,
+        /// Also strip behavior-bearing comments (directive / shebang /
+        /// encoding-decl).
+        #[arg(long)]
+        allow_significant: bool,
+        /// Also strip license / copyright headers.
+        #[arg(long)]
+        strip_license: bool,
+        /// Preserve a comment kind, on top of the protected defaults (repeatable).
+        #[arg(long, value_enum, value_name = "KIND")]
+        keep: Vec<CliKind>,
+        /// Leave the blank line a removal leaves behind.
+        #[arg(long)]
+        no_tidy: bool,
+    },
+
     /// Manage the committed baseline (`commenter-cat.baseline.toml`).
     Baseline {
         #[command(subcommand)]
@@ -193,6 +218,41 @@ pub(crate) enum CliFormat {
     Csv,
 }
 
+/// The CLI's comment-kind flag (`strip --keep`), mapped to the domain's
+/// [`CommentKind`] so `clap` stays out of `commenter-cat-core`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub(crate) enum CliKind {
+    /// A single-line comment (`#`, `//`).
+    Line,
+    /// A block / multi-line comment.
+    Block,
+    /// A docstring bound to a symbol (PEP 257, JSDoc/TSDoc).
+    Docstring,
+    /// A `#!` interpreter line.
+    Shebang,
+    /// A license / copyright header.
+    License,
+    /// A source-encoding declaration (PEP 263).
+    EncodingDecl,
+    /// A control directive (`commenter-cat:*`, `# noqa`, `// eslint-disable`, …).
+    Directive,
+}
+
+impl From<CliKind> for CommentKind {
+    fn from(kind: CliKind) -> Self {
+        match kind {
+            CliKind::Line => CommentKind::Line,
+            CliKind::Block => CommentKind::Block,
+            CliKind::Docstring => CommentKind::Docstring,
+            CliKind::Shebang => CommentKind::Shebang,
+            CliKind::License => CommentKind::License,
+            CliKind::EncodingDecl => CommentKind::EncodingDecl,
+            CliKind::Directive => CommentKind::Directive,
+        }
+    }
+}
+
 impl From<CliFormat> for OutputFormat {
     fn from(format: CliFormat) -> Self {
         match format {
@@ -239,6 +299,10 @@ mod tests {
         assert!(matches!(
             parse(&["commenter-cat", "remove", "c1"]).command,
             Command::Remove { .. }
+        ));
+        assert!(matches!(
+            parse(&["commenter-cat", "strip"]).command,
+            Command::Strip { .. }
         ));
         assert!(matches!(
             parse(&["commenter-cat", "doctor"]).command,
@@ -336,6 +400,65 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_defaults_to_a_dry_run_with_everything_protected() {
+        let Command::Strip {
+            path,
+            apply,
+            allow_significant,
+            strip_license,
+            keep,
+            no_tidy,
+        } = parse(&["commenter-cat", "strip"]).command
+        else {
+            panic!("expected strip");
+        };
+        // The destructive switches are all opt-in; tidy is on.
+        assert_eq!(path, None);
+        assert!(!apply);
+        assert!(!allow_significant);
+        assert!(!strip_license);
+        assert!(keep.is_empty());
+        assert!(!no_tidy);
+    }
+
+    #[test]
+    fn test_strip_flags_parse() {
+        let Command::Strip {
+            path,
+            apply,
+            allow_significant,
+            strip_license,
+            keep,
+            no_tidy,
+        } = parse(&[
+            "commenter-cat",
+            "strip",
+            "src",
+            "--apply",
+            "--allow-significant",
+            "--strip-license",
+            "--keep",
+            "docstring",
+            "--keep",
+            "block",
+            "--no-tidy",
+        ])
+        .command
+        else {
+            panic!("expected strip");
+        };
+        assert_eq!(path, Some(PathBuf::from("src")));
+        assert!(apply && allow_significant && strip_license && no_tidy);
+        assert_eq!(keep, vec![CliKind::Docstring, CliKind::Block]);
+        assert_eq!(CommentKind::from(keep[0]), CommentKind::Docstring);
+    }
+
+    #[test]
+    fn test_strip_rejects_an_unknown_keep_kind() {
+        assert!(Cli::try_parse_from(["commenter-cat", "strip", "--keep", "nonsense"]).is_err());
+    }
+
+    #[test]
     fn test_help_lists_every_verb() {
         let mut cmd = <Cli as clap::CommandFactory>::command();
         let help = cmd.render_long_help().to_string();
@@ -346,6 +469,7 @@ mod tests {
             "candidates",
             "apply-edit",
             "remove",
+            "strip",
             "baseline",
             "suppressions",
             "doctor",

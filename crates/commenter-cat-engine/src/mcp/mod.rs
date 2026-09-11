@@ -12,12 +12,14 @@
 pub mod server;
 pub mod tools;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use commenter_cat_core::comment::Comment;
 use commenter_cat_core::config;
 use commenter_cat_core::error::{CommenterCatError, CommenterCatResult};
 use commenter_cat_core::finding::Origin;
+use commenter_cat_core::kind::CommentKind;
 use commenter_cat_core::severity::Severity;
 use serde_json::{json, Value};
 
@@ -63,6 +65,7 @@ impl McpSurface {
             McpTool::Context => context(args),
             McpTool::ApplyEdit => apply_edit(args),
             McpTool::Remove => remove(args),
+            McpTool::Strip => strip(args),
         }
     }
 }
@@ -337,6 +340,90 @@ fn remove(args: &Value) -> CommenterCatResult<Value> {
     Ok(json!({ "removed": true, "findings": trip.findings }))
 }
 
+/// `strip` — UPDATE: sweep the tree and delete every comment the policy permits
+/// (Idea §4a, §5).
+///
+/// The one tool that rewrites source in bulk, so it is **dry-run by default**:
+/// without `apply=true` it returns the complete plan and touches nothing. The
+/// per-file list is ranked by removal count and bounded by `limit` like every
+/// other agent-facing return, while the summary counts stay over the full set.
+/// `reindex_required` tells the agent the persisted index is now stale and a
+/// `check` call will re-derive it.
+fn strip(args: &Value) -> CommenterCatResult<Value> {
+    let root = root_from(args)?;
+    let config = config::discover(&root)?;
+    let apply = flag(args, "apply", false);
+    let policy = ops::strip::StripPolicy {
+        allow_significant: flag(args, "allow_significant", false),
+        strip_license: flag(args, "strip_license", false),
+        keep_kinds: keep_kinds(args)?,
+        tidy: flag(args, "tidy", true),
+    };
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(50, |n| n as usize);
+
+    let report = ops::strip::strip(&root, &config, &policy, !apply)?;
+
+    // Biggest cleanups first, so page one is where the sweep actually landed.
+    let mut files: Vec<&ops::strip::StrippedFile> = report.files.iter().collect();
+    files.sort_by(|a, b| b.removed.cmp(&a.removed).then_with(|| a.path.cmp(&b.path)));
+    let files: Vec<Value> = files
+        .into_iter()
+        .map(|file| json!({ "path": file.path, "removed": file.removed, "lines": file.lines }))
+        .collect();
+    let view = token_economy::bound(files, &token_economy::Budget::limit(limit), 0, |_| 1);
+
+    Ok(json!({
+        "dry_run": report.dry_run,
+        "summary": {
+            "files_scanned": report.files_scanned,
+            "comments_scanned": report.comments_scanned,
+            "removed": report.removed,
+            "kept": {
+                "significant": report.kept_significant,
+                "license": report.kept_license,
+                "by_kind": report.kept_by_kind,
+            },
+            "files_touched": report.files.len(),
+        },
+        "reindex_required": report.reindex_required(),
+        "total": view.total,
+        "truncated": view.truncated,
+        "cursor": view.cursor.map(|c| c.offset),
+        "files": view.items,
+        "skipped": report.skipped,
+    }))
+}
+
+/// A boolean argument with its default.
+fn flag(args: &Value, name: &str, default: bool) -> bool {
+    args.get(name).and_then(Value::as_bool).unwrap_or(default)
+}
+
+/// The `keep` argument: comment-kind tokens the strip pass must preserve.
+fn keep_kinds(args: &Value) -> CommenterCatResult<BTreeSet<CommentKind>> {
+    let Some(values) = args.get("keep").and_then(Value::as_array) else {
+        return Ok(BTreeSet::new());
+    };
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(CommentKind::from_token)
+                .ok_or_else(|| {
+                    let known: Vec<&str> = CommentKind::ALL.iter().map(|k| k.as_str()).collect();
+                    CommenterCatError::config(format!(
+                        "unknown comment kind {value} in `keep` (expected one of: {})",
+                        known.join(", ")
+                    ))
+                })
+        })
+        .collect()
+}
+
 /// Resolves the `comment_id` argument to its persisted comment record.
 fn resolve(session: &Session, args: &Value) -> CommenterCatResult<Comment> {
     let id = args
@@ -359,7 +446,7 @@ mod tests {
     #[test]
     fn test_descriptors_carry_name_and_stability() {
         let descriptors = McpSurface::descriptors();
-        assert_eq!(descriptors.len(), 6);
+        assert_eq!(descriptors.len(), 7);
         assert_eq!(descriptors[0]["name"], "query");
         assert_eq!(descriptors[0]["stability"], "stable");
         let apply = descriptors
@@ -424,6 +511,66 @@ mod tests {
         assert!(result["total"].as_u64().unwrap() >= 2);
         assert_eq!(result["candidates"].as_array().unwrap().len(), 1);
         assert_eq!(result["truncated"], true);
+    }
+
+    #[test]
+    fn test_strip_tool_plans_by_default_and_applies_on_request() {
+        let repo = TestRepo::new();
+        repo.write("m.py", "# a note\nx = 1\n");
+        let path = json!(repo.path().to_string_lossy());
+
+        // Default: a plan. The summary is populated but the file is untouched —
+        // the destructive path is opt-in, never the default for an agent.
+        let plan = McpSurface::call("strip", &json!({ "path": path })).unwrap();
+        assert_eq!(plan["dry_run"], true);
+        assert_eq!(plan["summary"]["removed"], 1);
+        assert_eq!(plan["reindex_required"], false);
+        assert_eq!(plan["files"][0]["path"], "m.py");
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("m.py")).unwrap(),
+            "# a note\nx = 1\n"
+        );
+
+        // apply=true rewrites, and says the index now needs re-deriving.
+        let applied = McpSurface::call("strip", &json!({ "path": path, "apply": true })).unwrap();
+        assert_eq!(applied["dry_run"], false);
+        assert_eq!(applied["reindex_required"], true);
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("m.py")).unwrap(),
+            "x = 1\n"
+        );
+    }
+
+    #[test]
+    fn test_strip_keeps_protected_kinds_and_bounds_its_file_list() {
+        let repo = TestRepo::new();
+        repo.write("a.py", "#!/usr/bin/env python3\n# one\n# two\nx = 1\n");
+        repo.write("b.py", "# three\ny = 2\n");
+        let args = json!({ "path": repo.path().to_string_lossy(), "limit": 1 });
+
+        let plan = McpSurface::call("strip", &args).unwrap();
+
+        assert_eq!(plan["summary"]["kept"]["significant"], 1, "the shebang");
+        assert_eq!(
+            plan["total"].as_u64().unwrap(),
+            2,
+            "both files have removals"
+        );
+        assert_eq!(
+            plan["files"].as_array().unwrap().len(),
+            1,
+            "bounded to limit"
+        );
+        assert_eq!(plan["truncated"], true);
+    }
+
+    #[test]
+    fn test_strip_rejects_an_unknown_keep_kind() {
+        let repo = TestRepo::new();
+        repo.write("m.py", "# a note\nx = 1\n");
+        let args = json!({ "path": repo.path().to_string_lossy(), "keep": ["nonsense"] });
+        let error = McpSurface::call("strip", &args).expect_err("unknown kind is refused");
+        assert!(error.to_string().contains("nonsense"), "{error}");
     }
 
     #[test]

@@ -19,7 +19,7 @@ use commenter_cat_core::error::{cause_chain, CommenterCatError, CommenterCatResu
 
 use super::McpSurface;
 
-// Typed parameter schemas for the six tools. Deriving `JsonSchema` makes the
+// Typed parameter schemas for the tools. Deriving `JsonSchema` makes the
 // rmcp `#[tool]` macro emit a proper `{"type":"object", …}` inputSchema with
 // per-field documentation. Without a typed parameter, an untyped `Value`
 // argument derives the permissive `AnyValue` schema (no `"type"`), which strict
@@ -117,7 +117,34 @@ struct RemoveArgs {
     allow_significant: Option<bool>,
 }
 
-/// The Commenter-Cat MCP server — the six primitives, 1:1 with the CLI verbs.
+/// Arguments for `strip`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct StripArgs {
+    /// Repository root to operate on. Defaults to the server's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    /// Rewrite the files. Defaults to false — a dry-run plan that touches nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    apply: Option<bool>,
+    /// Also strip behavior-bearing comments (directive, shebang, encoding-decl). Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_significant: Option<bool>,
+    /// Also strip license / copyright headers. Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    strip_license: Option<bool>,
+    /// Extra comment kinds to preserve: line, block, docstring, shebang, license, encoding-decl, directive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keep: Option<Vec<String>>,
+    /// Collapse the blank line a removal leaves behind. Defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tidy: Option<bool>,
+    /// Maximum files in the returned per-file list. Defaults to 50; the summary counts the full set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
+}
+
+/// The Commenter-Cat MCP server — the primitives, 1:1 with the CLI verbs.
 /// The `#[tool_router]`/`#[tool_handler]` macros generate the routing and a
 /// tools-enabled `get_info` (server name/version inferred from `Cargo.toml`).
 #[derive(Clone, Default)]
@@ -195,6 +222,18 @@ impl CommenterCatServer {
         Parameters(args): Parameters<RemoveArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         dispatch("remove", args)
+    }
+
+    #[tool(
+        name = "strip",
+        description = "Scan the tree and strip every comment, through the parse-invariant \
+                       applier. Returns a dry-run plan; pass apply=true to rewrite the files."
+    )]
+    async fn strip(
+        &self,
+        Parameters(args): Parameters<StripArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        dispatch("strip", args)
     }
 }
 
@@ -296,7 +335,7 @@ mod tests {
         // no `type`, which strict MCP clients reject — silently dropping the
         // whole tool list. The typed parameter structs keep each schema valid.
         let tools = CommenterCatServer::tool_router().list_all();
-        assert_eq!(tools.len(), 6, "all six primitives are registered");
+        assert_eq!(tools.len(), 7, "every primitive is registered");
         for tool in tools {
             let schema = &tool.input_schema;
             assert_eq!(

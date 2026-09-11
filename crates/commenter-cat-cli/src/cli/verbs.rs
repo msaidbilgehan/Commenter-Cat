@@ -4,9 +4,11 @@
 //! the unified records into the two-layer index. The index-backed verbs (`query`,
 //! `context`, `apply-edit`, `remove`) open that index via a [`Session`] and run
 //! the find→understand→update loop. `baseline` snapshots/prunes the committed
-//! baseline; `suppressions export` (source-mutating) and `issues sync` (network)
-//! return an explanatory error until wired deliberately. Output goes to stdout;
-//! the return value is the process exit code (Idea §8).
+//! baseline. The three verbs that reach past the index — `strip` and
+//! `suppressions export` (source-mutating) and `issues sync` (network) — carry
+//! their own guardrails; `strip` and `issues sync` plan by default and mutate
+//! only under `--apply`. Output goes to stdout; the return value is the process
+//! exit code (Idea §8).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -17,6 +19,7 @@ use commenter_cat_core::comment::Comment;
 use commenter_cat_core::config;
 use commenter_cat_core::error::{CommenterCatError, CommenterCatResult};
 use commenter_cat_core::finding::Origin;
+use commenter_cat_core::kind::CommentKind;
 use commenter_cat_core::severity::Severity;
 use commenter_cat_engine::issues;
 use commenter_cat_engine::ops::baseline;
@@ -75,6 +78,23 @@ pub(crate) fn run(cli: Cli) -> CommenterCatResult<i32> {
             comment_id,
             allow_significant,
         } => run_remove(&comment_id, allow_significant),
+        Command::Strip {
+            path,
+            apply,
+            allow_significant,
+            strip_license,
+            keep,
+            no_tidy,
+        } => run_strip(
+            path.as_deref(),
+            apply,
+            &ops::strip::StripPolicy {
+                allow_significant,
+                strip_license,
+                keep_kinds: keep.into_iter().map(CommentKind::from).collect(),
+                tidy: !no_tidy,
+            },
+        ),
         Command::Baseline { action } => run_baseline(&action, use_cache),
         Command::Suppressions { action } => run_suppressions(&action, use_cache),
         Command::Mcp => run_mcp(),
@@ -434,6 +454,74 @@ fn run_remove(comment_id: &str, allow_significant: bool) -> CommenterCatResult<i
     session.write_source(&comment, &trip.new_source)?;
     print(&edit_report("Removed", &comment, &trip.findings));
     Ok(render::EXIT_OK)
+}
+
+/// `commenter-cat strip` — UPDATE: sweep the tree and delete every comment the
+/// policy permits, through the parse-invariant applier (Idea §4a, §5).
+///
+/// Source-mutating and repo-wide, so — like `issues sync` — it **defaults to a
+/// dry-run plan** and rewrites only under `--apply`. Both modes print the same
+/// report, differing in tense, so what you review is what you get. Skips
+/// (a comment the applier refused, an unreadable file) go to stderr: a degraded
+/// sweep is visible, never silent.
+fn run_strip(
+    path: Option<&std::path::Path>,
+    apply: bool,
+    policy: &ops::strip::StripPolicy,
+) -> CommenterCatResult<i32> {
+    let root = match path {
+        Some(path) => path.to_path_buf(),
+        None => root_for(&[])?,
+    };
+    let config = config::discover(&root)?;
+    let report = ops::strip::strip(&root, &config, policy, !apply)?;
+    print(&strip_report(&report));
+    for note in &report.skipped {
+        eprintln!("commenter-cat: note: skipped {note}");
+    }
+    Ok(render::EXIT_OK)
+}
+
+/// Renders a strip plan (or result) — the counts first, then the per-file
+/// breakdown, then what to do next.
+fn strip_report(report: &ops::strip::StripReport) -> String {
+    let (headline, verb) = if report.dry_run {
+        ("Strip plan (dry run — nothing written)", "would remove")
+    } else {
+        ("Stripped", "removed")
+    };
+    let mut out = format!(
+        "{headline}: {verb} {} comment(s) in {} file(s), of {} scanned across {} file(s).\n",
+        report.removed,
+        report.files.len(),
+        report.comments_scanned,
+        report.files_scanned,
+    );
+    if report.kept() > 0 {
+        out.push_str(&format!(
+            "Kept {} protected comment(s): {} behavior-bearing, {} license, {} by --keep.\n",
+            report.kept(),
+            report.kept_significant,
+            report.kept_license,
+            report.kept_by_kind,
+        ));
+    }
+    for file in &report.files {
+        out.push_str(&format!("  {} — {}\n", file.path, file.removed));
+    }
+    if !report.skipped.is_empty() {
+        out.push_str(&format!(
+            "{} comment(s)/file(s) skipped (see stderr).\n",
+            report.skipped.len()
+        ));
+    }
+    if report.dry_run && report.removed > 0 {
+        out.push_str("Re-run with --apply to rewrite these files.\n");
+    }
+    if report.reindex_required() {
+        out.push_str("The index now describes removed comments — re-run `commenter-cat check`.\n");
+    }
+    out
 }
 
 /// Resolves a CLI comment-id string to its persisted comment record.
