@@ -42,7 +42,11 @@ Version/edition/MSRV are workspace-inherited — bump in the root `Cargo.toml`
 - **`missing_docs = "warn"`** — public items need a doc comment.
 - **The write path is parse-invariant — never write source directly.** Comment edits must go
   through `ops/apply` (re-parse + assert the code-node tree is byte-identical, abort on any
-  delta). Behavior-bearing kinds (directive / shebang / encoding-decl) need `allow_significant`.
+  delta); `ops/strip` is its bulk sweep and reuses it per comment rather than rewriting text.
+  Behavior-bearing kinds (directive / shebang / encoding-decl) need `allow_significant`.
+  A Python docstring *deletion* leaves no string to exclude, so the token stream alone
+  decides — which is why dropping a symbol's **only** docstring still aborts (the emptied
+  suite loses its indent/dedent tokens) rather than writing an `IndentationError` to disk.
 - **Errors:** `CommenterCatError` (thiserror, `#[non_exhaustive]`) with per-subsystem variants; chain
   causes with `.caused_by(e)`; translate infra errors at the `commenter-cat-engine` adapter boundary.
 
@@ -109,12 +113,28 @@ Version/edition/MSRV are workspace-inherited — bump in the root `Cargo.toml`
 ## CLI status (reality vs. plan)
 
 Every verb is wired end to end: `check`, `candidates`, `doctor`, `query`, `context`,
-`apply-edit`, `remove`, `baseline`, `suppressions export`, `issues sync`, `mcp`,
+`apply-edit`, `remove`, `strip`, `baseline`, `suppressions export`, `issues sync`, `mcp`,
 `install-hooks`. `commenter-cat check` now applies the unified suppression pass (inline `commenter-cat:*`
 directives + committed baseline): suppressed findings stay in the index but are hidden
-from the default view and never gate CI; `--show-suppressed` is the audit view. Two
+from the default view and never gate CI; `--show-suppressed` is the audit view. Three
 source/network verbs carry deliberate guardrails:
 
+- `commenter-cat strip` is the **scan-and-clean sweep** (`ops/strip.rs`): one walk, then per
+  file a single splice proven code-invariant by the *same* leaf-token comparison the
+  applier uses — verification is per **file**, not per comment, because per-comment
+  re-parsing is quadratic exactly where a sweep lands hardest (600 comments in one file
+  cost ~1200 parses, ≈2s → ~10ms). A batch that does not verify is only unsafe
+  *somewhere*, so it re-runs through the single-comment applier to keep what is safe and
+  name what is not. Source-mutating and repo-wide, so it **defaults to a dry-run plan**
+  and rewrites only under `--apply`. Protected by kind and *counted, never silently dropped*: behavior-bearing
+  comments (directive / shebang / encoding-decl) and license headers survive unless
+  surrendered by `--allow-significant` / `--strip-license`; `--keep <kind>` adds
+  protection. A removal leaves a blank line behind, so `strip` tidies the lines it
+  touched and **re-verifies the tidy against the same leaf-token stream**, discarding it
+  wholesale if it differs (`--no-tidy` opts out). Per-file degradation: an unreadable
+  file, a grammar failure, or a comment the applier refuses is a recorded skip — only a
+  mid-pass *write* failure is fatal. Stripping leaves the index describing comments that
+  are gone; the report says so and `check` re-derives it.
 - `commenter-cat suppressions export` mutates source — it materializes Commenter-Cat's suppression set into each
   tool's native directives (`# noqa`, `eslint-disable-next-line`, `# shellcheck disable`,
   `# gitleaks:allow`), **merged per line** (`# noqa: D400, D415`) and written through the

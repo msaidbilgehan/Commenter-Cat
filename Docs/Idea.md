@@ -234,21 +234,21 @@ leaving its session — find → understand → judge → update → re-check:
 flowchart LR
     F["find<br/>query · candidates"] --> U["understand<br/>context"]
     U --> J{agent judges}
-    J --> E["update<br/>apply_edit · remove"]
+    J --> E["update<br/>apply_edit · remove · strip"]
     E -->|re-checked findings| J
     J -.->|broad sweep| C["rule-check<br/>check"]
     C --> J
 ```
 
-**Three verbs, six primitives.** The agent thinks in *find · update · rule-check*; the surface
-organizes the six tools under them:
+**Three verbs, seven primitives.** The agent thinks in *find · update · rule-check*; the surface
+organizes the tools under them:
 
 | Verb | Primitives | Returns / does |
 |---|---|---|
 | **find** | `query`, `candidates` | the comment set, filtered (marker / kind / rule / FTS / semantic), **ranked + paginated**; `candidates` = the blame-skew rot shortlist |
 | **understand** | `context` | one comment + its mapped code window — the unit on which an agent judges semantic rot |
 | **rule-check** | `check` | unified findings (all providers + native), normalized — one report across 4 languages |
-| **update** | `apply_edit`, `remove` | comment-only write / deletion under the **safe-apply guarantee** (below); the engine lands the agent's text without it ever touching code |
+| **update** | `apply_edit`, `remove`, `strip` | comment-only write / deletion under the **safe-apply guarantee** (below); the engine lands the agent's text without it ever touching code. `strip` is the same guarantee applied in bulk — see below |
 
 **Token economy — the first-class constraint.** An agent has a finite context window; a repo
 has tens of thousands of comments. So **no return is a firehose** — every result is ranked,
@@ -279,6 +279,23 @@ enforced by the engine, never trusted to the agent (§5):
    **parse-invariant yet behavior-bearing** — read by the type-checker, the orchestrated
    linters, or the OS, not the grammar. They are **not freely rewritable**: an edit requires an
    explicit `allow_significant` acknowledgment and is flagged as such.
+
+**`strip` — the sweep, not a new guarantee.** Sometimes the judgment is repo-wide and already
+made: *delete them all* (a vendored drop, a generated tree, a house style with no comments). A
+sweep must not be a second, weaker write path, so `strip` reuses the *same* applier per comment —
+one walk, per file one high byte → low pass, the file written only once all of its removals
+succeed. Three properties make it safe to point at a whole repository:
+
+- **Dry-run by default.** Like `issues sync`, the destructive mode is opt-in (`apply`); the
+  default run computes the complete plan — including which comments the applier would refuse —
+  and touches nothing.
+- **Protected by kind, and counted.** Behavior-bearing comments (§4a write-protection) and
+  license headers survive unless explicitly surrendered, and everything protected is *reported*,
+  never quietly dropped from the picture.
+- **Per-file degradation.** An unreadable file, a grammar failure, or a comment the applier
+  refuses is a recorded skip (§5 — visible, never silent); only a mid-pass *write* failure is
+  fatal. The blank line a removal leaves is tidied, and the tidy is itself re-checked against the
+  same token stream and discarded wholesale if it differs.
 
 **Division of labor — _AI proposes, engine guarantees._** The agent judges (via `context` +
 `candidates`), authors the new comment text, and the engine applies it deterministically —

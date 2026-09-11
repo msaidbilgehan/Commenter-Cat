@@ -71,7 +71,9 @@ find ─▶ understand ─▶ judge ─▶ update ─▶ re-check ─┐
 - **rule-check** — `check` runs every provider and the native silent-rot detectors, normalized
   into one report across all four languages.
 - **update** — `apply-edit` / `remove` land comment-only changes under the **safe-apply
-  guarantee** and return the re-checked findings inline, so the loop closes in one call.
+  guarantee** and return the re-checked findings inline, so the loop closes in one call;
+  `strip` is the same guarantee swept across a whole tree, for when the answer is *delete
+  them all* (dry-run plan by default).
 
 The split that organizes the substrate: **the engine owns the drift it can _prove_; the agent
 owns the drift it must _judge_; the comment→code mapping is the handoff between them.**
@@ -166,6 +168,11 @@ commenter-cat context <COMMENT_ID> --with-code   # ...plus the bound code span
 commenter-cat apply-edit <COMMENT_ID> "# updated text"   # parse-invariant edit, re-checked inline
 commenter-cat remove <COMMENT_ID>                         # remove a comment, re-checked inline
 
+commenter-cat strip                         # plan a whole-tree comment sweep (dry run)
+commenter-cat strip --apply                 # ...and rewrite the files
+commenter-cat strip --apply --allow-significant --strip-license   # take the protected kinds too
+commenter-cat strip --apply --keep docstring   # ...but preserve docstrings
+
 commenter-cat baseline accept               # snapshot current findings into the committed baseline
 commenter-cat suppressions export           # write Commenter-Cat's suppressions as native tool directives
 commenter-cat issues sync                   # plan comment↔issue sync (dry-run; --apply to mutate)
@@ -182,7 +189,12 @@ instead of the pinned toolchain), `--hermetic` (require the pinned toolchain), `
 `commenter-cat --help` lists every verb. Exit codes: `0` clean · `1` findings at/above the gate · `2`
 an operational error.
 
-> **Every verb is wired end to end; the two outward-facing ones carry guardrails.**
+> **Every verb is wired end to end; the three outward-facing ones carry guardrails.**
+> `commenter-cat strip` rewrites source across the whole tree, so it **defaults to a dry-run plan**
+> and mutates only under `--apply`. Every removal goes through the same parse-invariant applier a
+> single `remove` uses, behavior-bearing comments (`#!`, `# noqa`, `# type: ignore`, encoding
+> declarations) and license headers are preserved unless surrendered by `--allow-significant` /
+> `--strip-license`, and anything the applier refuses is reported rather than forced.
 > `commenter-cat suppressions export` mutates source — it writes each tool's native directives (`# noqa`,
 > `eslint-disable-next-line`, `# shellcheck disable`, `# gitleaks:allow`) through the parse-invariant
 > applier (a code-altering insert aborts) and is idempotent on the directive marker.
@@ -197,7 +209,8 @@ an operational error.
 
 ### Safe-apply guarantee
 
-`apply-edit` / `remove` are comment-only and enforced by the engine, never trusted to the agent:
+`apply-edit` / `remove` / `strip` are comment-only and enforced by the engine, never trusted to
+the agent:
 
 1. **Parse-invariance** — after the edit, the file is re-parsed and the code-node tree must be
    byte-identical; if any code node changed, the edit **aborts**.
@@ -228,13 +241,13 @@ preserved, original backed up, written atomically). The repo also ships a commit
 `commenter-cat mcp` is a **stdio** server: Claude spawns it per session (not a daemon), and
 the per-project SQLite cache under `.commenter-cat/` carries state across spawns. After
 registering, reload Claude and run `/mcp` to confirm `commenter-cat` is connected — the agent
-then drives `query` · `context` · `check` · `candidates` · `apply-edit` · `remove`.
+then drives `query` · `context` · `check` · `candidates` · `apply_edit` · `remove` · `strip`.
 
 ### Example prompts
 
 Once `/mcp` shows `commenter-cat` connected, just ask in plain language — Claude picks the
-right tools (`query` · `context` · `check` · `candidates` · `apply-edit` · `remove`) and only
-ever edits comments, never the code:
+right tools (`query` · `context` · `check` · `candidates` · `apply_edit` · `remove` · `strip`)
+and only ever edits comments, never the code:
 
 - *"Find the stalest comments in this repo and fix the ones that are clearly wrong."*
 - *"Run a commenter-cat check on `src/auth/` and group the comment findings by severity."*
@@ -244,6 +257,7 @@ ever edits comments, never the code:
 - *"Search the index for comments about rate limiting and tell me which ones are out of date."*
 - *"Did I leave a secret in a `# TODO` anywhere? Check the comments for leaked tokens."*
 - *"Accept the current findings as the baseline so CI only flags new comment rot from now on."*
+- *"Strip every comment out of `vendor/` — show me the plan first, then apply it."*
 
 ## Configuration
 
